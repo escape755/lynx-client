@@ -17,6 +17,7 @@ import com.retrivedmods.wclient.game.module.motion.NoClipModule
 import com.retrivedmods.wclient.game.module.motion.BypassFlyModule       // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.misc.AutoDisconnectModule
 import com.retrivedmods.wclient.game.module.misc.CommandHandlerModule
+import com.retrivedmods.wclient.game.module.visual.AntiLagModule
 import com.retrivedmods.wclient.game.module.visual.CoordinatesModule
 import com.retrivedmods.wclient.game.module.misc.DesyncModule
 import com.retrivedmods.wclient.game.module.misc.FakeDeathModule
@@ -123,6 +124,7 @@ object ModuleManager {
             add(CrosshairModule())
             add(TargetHudModule())
             add(FullbrightModule())
+            add(AntiLagModule())
 
             // World
             add(FreeCameraModule())
