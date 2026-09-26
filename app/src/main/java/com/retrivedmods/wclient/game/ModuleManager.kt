@@ -13,6 +13,7 @@ import com.retrivedmods.wclient.game.module.combat.LynxAuraModule        // NUEV
 import com.retrivedmods.wclient.game.module.combat.LynxAuraXModule       // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.combat.LynxAuraProModule     // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.misc.ArrayListModule
+import com.retrivedmods.wclient.game.module.misc.AutoRespawnModule
 import com.retrivedmods.wclient.game.module.motion.NoClipModule
 import com.retrivedmods.wclient.game.module.motion.BypassFlyModule       // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.misc.AutoDisconnectModule
@@ -137,6 +138,7 @@ object ModuleManager {
             // Misc
 
             add(AutoDisconnectModule())
+            add(AutoRespawnModule())
             add(ArrayListModule())
             add(ToggleSoundModule())
             add(ChestStealerModule())
