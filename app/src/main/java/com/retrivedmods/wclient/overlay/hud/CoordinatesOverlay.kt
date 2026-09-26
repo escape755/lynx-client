@@ -1,10 +1,14 @@
 package com.retrivedmods.wclient.overlay.hud
 
-import android.annotation.SuppressLint
 import com.retrivedmods.wclient.overlay.OverlayWindow
 import com.retrivedmods.wclient.overlay.OverlayManager
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -18,7 +22,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -35,7 +38,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.retrivedmods.wclient.game.module.visual.CoordinatesModule
 import com.retrivedmods.wclient.ui.theme.WColors
-import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 class CoordinatesOverlay : OverlayWindow() {
@@ -193,20 +195,26 @@ class CoordinatesOverlay : OverlayWindow() {
         } catch (e: Exception) {}
     }
 
-    @SuppressLint("UnrememberedMutableState")
     @Composable
     override fun Content() {
         if (!isOverlayEnabled()) return
 
-        var rainbowOffset by mutableFloatStateOf(0f)
-
-        LaunchedEffect(Unit) {
-            while (true) {
-                rainbowOffset += 0.02f
-                if (rainbowOffset > 1f) rainbowOffset = 0f
-                delay(16L)
-            }
-        }
+        // Was: a local `mutableFloatStateOf` with no `remember`, ticked by a manual
+        // delay(16) loop. Since the state wasn't remembered, every recomposition it
+        // triggered created a brand-new state object reset to 0f, so the color never
+        // actually advanced - it just forced a full redraw of this window forever for
+        // no visual gain. rememberInfiniteTransition drives the same 0->1 cycle
+        // through Compose's real frame clock instead.
+        val infiniteTransition = rememberInfiniteTransition(label = "coordinatesRainbow")
+        val rainbowOffset by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 800, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "rainbowOffset"
+        )
 
         val textColor = getTextColor(rainbowOffset)
 

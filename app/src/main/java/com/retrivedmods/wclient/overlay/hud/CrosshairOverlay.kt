@@ -1,15 +1,18 @@
 package com.retrivedmods.wclient.overlay.hud
 
-import android.annotation.SuppressLint
 import com.retrivedmods.wclient.overlay.OverlayWindow
 import com.retrivedmods.wclient.overlay.OverlayManager
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -19,11 +22,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.retrivedmods.wclient.game.module.visual.CrosshairModule
-import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -62,6 +65,10 @@ class CrosshairOverlay : OverlayWindow() {
     private var pulsing by mutableStateOf(false)
     private var pulseSpeed by mutableFloatStateOf(1.0f)
     private var showHitMarker by mutableStateOf(false)
+
+    // Reused every draw instead of allocating a new Path per frame (only the
+    // DIAMOND crosshair type needs it; everyone else never touches this).
+    private val diamondPath = Path()
 
     companion object {
         val overlayInstance by lazy { CrosshairOverlay() }
@@ -145,23 +152,42 @@ class CrosshairOverlay : OverlayWindow() {
         }
     }
 
-    @SuppressLint("UnrememberedMutableState")
     @Composable
     override fun Content() {
         if (!isOverlayEnabled()) return
 
-        var rainbowOffset by mutableFloatStateOf(0f)
-        var pulseOffset by mutableFloatStateOf(0f)
-
-        LaunchedEffect(Unit) {
-            while (true) {
-                rainbowOffset += rainbowSpeed * 0.02f
-                pulseOffset += pulseSpeed * 0.05f
-                if (rainbowOffset > 1f) rainbowOffset = 0f
-                if (pulseOffset > 1f) pulseOffset = 0f
-                delay(16L)
-            }
-        }
+        // Was: two local `mutableFloatStateOf` vars with no `remember`, stepped by a
+        // manual delay(16) loop. Without `remember` the state never survived a
+        // recomposition, so every tick reset it to 0f - the rainbow/pulse never
+        // actually moved, it just forced this whole window to redraw at ~60fps
+        // forever for nothing (that's what the suppressed lint warning was flagging).
+        // rememberInfiniteTransition reproduces the same 0->1 cycles through
+        // Compose's real frame clock, at the same speed as the old increments.
+        val infiniteTransition = rememberInfiniteTransition(label = "crosshairAnim")
+        val rainbowOffset by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(
+                    durationMillis = (800f / rainbowSpeed.coerceAtLeast(0.01f)).toInt().coerceAtLeast(1),
+                    easing = LinearEasing
+                ),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "rainbowOffset"
+        )
+        val pulseOffset by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(
+                    durationMillis = (320f / pulseSpeed.coerceAtLeast(0.01f)).toInt().coerceAtLeast(1),
+                    easing = LinearEasing
+                ),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "pulseOffset"
+        )
 
         val crosshairColor = getCrosshairColor(rainbowOffset, pulseOffset)
         val currentSize = if (pulsing) {
@@ -275,15 +301,14 @@ class CrosshairOverlay : OverlayWindow() {
             }
             
             CrosshairModule.CrosshairType.DIAMOND -> {
-                val path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(center.x, center.y - halfSize)
-                    lineTo(center.x + halfSize, center.y)
-                    lineTo(center.x, center.y + halfSize)
-                    lineTo(center.x - halfSize, center.y)
-                    close()
-                }
+                diamondPath.reset()
+                diamondPath.moveTo(center.x, center.y - halfSize)
+                diamondPath.lineTo(center.x + halfSize, center.y)
+                diamondPath.lineTo(center.x, center.y + halfSize)
+                diamondPath.lineTo(center.x - halfSize, center.y)
+                diamondPath.close()
                 drawPath(
-                    path = path,
+                    path = diamondPath,
                     color = color,
                     style = Stroke(width = strokeWidth)
                 )

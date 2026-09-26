@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -137,13 +138,21 @@ class MinimapOverlay : OverlayWindow() {
     override fun Content() {
         if (!isOverlayEnabled()) return
 
-        LaunchedEffect(targetRotation) {
-            while (kotlin.math.abs(playerRotation - targetRotation) > 0.001f) {
-                var delta = (targetRotation - playerRotation) % (2 * Math.PI).toFloat()
-                if (delta > Math.PI) delta -= (2 * Math.PI).toFloat()
-                if (delta < -Math.PI) delta += (2 * Math.PI).toFloat()
+        // Was keyed on targetRotation, so every incoming rotation update (i.e. every
+        // time the player turns, which is constantly) cancelled and relaunched this
+        // coroutine instead of just letting it keep easing toward whatever the
+        // latest target is. Keying on Unit launches it exactly once; it reads
+        // targetRotation fresh each tick, so the smoothing math is unchanged.
+        LaunchedEffect(Unit) {
+            while (true) {
+                val target = targetRotation
+                if (kotlin.math.abs(playerRotation - target) > 0.001f) {
+                    var delta = (target - playerRotation) % (2 * Math.PI).toFloat()
+                    if (delta > Math.PI) delta -= (2 * Math.PI).toFloat()
+                    if (delta < -Math.PI) delta += (2 * Math.PI).toFloat()
 
-                playerRotation += delta * rotationSmoothStep
+                    playerRotation += delta * rotationSmoothStep
+                }
                 kotlinx.coroutines.delay(16L)
             }
         }
@@ -157,6 +166,29 @@ class MinimapOverlay : OverlayWindow() {
         val rawRadius = size / 2
         val radius = rawRadius * minimapZoom
         val scale = 2f * minimapZoom
+
+        // Was allocated fresh inside the Canvas draw scope - once per frame for the
+        // compass label, and again per NAMED ENTITY per frame (so a crowded server
+        // meant dozens of new Paint objects, 60 times a second). remember() can't be
+        // called inside a Canvas draw lambda, so these live here in the composable
+        // and get captured by the draw lambda below; only the size-dependent
+        // textSize field gets updated per draw, which is a plain field write, not
+        // an allocation.
+        val compassPaint = remember {
+            android.graphics.Paint().apply {
+                color = android.graphics.Color.BLUE
+                textAlign = android.graphics.Paint.Align.CENTER
+                isFakeBoldText = true
+                isAntiAlias = true
+            }
+        }
+        val entityNamePaint = remember {
+            android.graphics.Paint().apply {
+                color = android.graphics.Color.WHITE
+                textAlign = android.graphics.Paint.Align.CENTER
+                isAntiAlias = true
+            }
+        }
 
         Column {
             Box(
@@ -188,16 +220,10 @@ class MinimapOverlay : OverlayWindow() {
                 val northX = centerX + northDistance * sin(northAngle)
                 val northY = centerY - northDistance * cos(northAngle)
 
-                val paint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.BLUE
-                    textSize = size * 0.14f
-                    textAlign = android.graphics.Paint.Align.CENTER
-                    isFakeBoldText = true
-                    isAntiAlias = true
-                }
+                compassPaint.textSize = size * 0.14f
 
-                drawContext.canvas.nativeCanvas.drawText("^", northX, northY - paint.textSize * 0.6f, paint)
-                drawContext.canvas.nativeCanvas.drawText("N", northX, northY + paint.textSize * 0.4f, paint)
+                drawContext.canvas.nativeCanvas.drawText("^", northX, northY - compassPaint.textSize * 0.6f, compassPaint)
+                drawContext.canvas.nativeCanvas.drawText("N", northX, northY + compassPaint.textSize * 0.4f, compassPaint)
 
                 entities.forEach { entity ->
                     val relX = entity.position.x - center.x
@@ -224,12 +250,7 @@ class MinimapOverlay : OverlayWindow() {
                     )
 
                     if (showNames && entity.name.isNotEmpty()) {
-                        val paint = android.graphics.Paint().apply {
-                            color = android.graphics.Color.WHITE
-                            textSize = size * 0.08f
-                            textAlign = android.graphics.Paint.Align.CENTER
-                            isAntiAlias = true
-                        }
+                        entityNamePaint.textSize = size * 0.08f
 
                         val textY = entityY - dotRadius - 5f
                         val displayText = if (showDistance) {
@@ -238,7 +259,7 @@ class MinimapOverlay : OverlayWindow() {
                             entity.name
                         }
 
-                        drawContext.canvas.nativeCanvas.drawText(displayText, entityX, textY, paint)
+                        drawContext.canvas.nativeCanvas.drawText(displayText, entityX, textY, entityNamePaint)
                     }
                 }
             }

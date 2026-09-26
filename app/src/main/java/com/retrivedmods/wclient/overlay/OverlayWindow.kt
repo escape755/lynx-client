@@ -26,7 +26,13 @@ abstract class OverlayWindow {
             x = 0
             y = 0
             type = LayoutParams.TYPE_APPLICATION_OVERLAY
-            flags = LayoutParams.FLAG_NOT_FOCUSABLE or LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            // TYPE_APPLICATION_OVERLAY windows are NOT hardware-accelerated by
+            // default - without this flag every overlay (ClickGUI, HUD, all of
+            // it) draws through the slow software/CPU path instead of the GPU,
+            // which is the single biggest lever for how laggy the whole UI feels.
+            flags = LayoutParams.FLAG_NOT_FOCUSABLE or
+                LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                LayoutParams.FLAG_HARDWARE_ACCELERATED
             format = PixelFormat.TRANSLUCENT
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 alpha =

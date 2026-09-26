@@ -90,8 +90,12 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
             }
         }
 
-        localPlayer.onPacketBound(packet)
-        level.onPacketBound(packet)
+        try {
+            localPlayer.onPacketBound(packet)
+            level.onPacketBound(packet)
+        } catch (e: Exception) {
+            Log.e("GameSession", "localPlayer/level failed to handle ${packet::class.simpleName}", e)
+        }
 
         val interceptablePacket = InterceptablePacket(packet)
 

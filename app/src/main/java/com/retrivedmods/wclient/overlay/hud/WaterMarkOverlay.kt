@@ -60,6 +60,16 @@ class WaterMarkOverlay : OverlayWindow() {
         val overlayInstance by lazy { WaterMarkOverlay() }
         private var shouldShowOverlay = false
 
+        // The gradient shader interpolates between stops on the GPU regardless of
+        // how many we hand it, so 20 pre-blended stops looks just as smooth as 100
+        // for a short text run - at a fifth of the per-frame allocation cost.
+        private val RAINBOW_COLORS = listOf(
+            Color(0xFFFF0000), Color(0xFFFF7F00), Color(0xFFFFFF00),
+            Color(0xFF00FF00), Color(0xFF0000FF), Color(0xFF4B0082),
+            Color(0xFF9400D3), Color(0xFFFF0000)
+        )
+        private const val GRADIENT_STOPS = 20
+
         fun setOverlayEnabled(enabled: Boolean) {
             shouldShowOverlay = enabled
             try {
@@ -147,24 +157,20 @@ class WaterMarkOverlay : OverlayWindow() {
 
     @Composable
     private fun RGBWatermark(time: Float) {
-        val colors = listOf(
-            Color(0xFFFF0000), Color(0xFFFF7F00), Color(0xFFFFFF00),
-            Color(0xFF00FF00), Color(0xFF0000FF), Color(0xFF4B0082),
-            Color(0xFF9400D3), Color(0xFFFF0000)
-        )
-
+        // Was rebuilt with a growable mutableListOf().add() loop over 100 stops -
+        // every single frame, forever, just to shimmer ~10-15 characters of text.
+        // List(n) { } allocates the backing array once at the right size instead of
+        // growing it repeatedly, and GRADIENT_STOPS (20 instead of 100) cuts the
+        // per-frame Color blends by 5x with no visible difference once the shader
+        // interpolates between them.
         val smoothGradient = remember(time) {
-            val gradientColors = mutableListOf<Color>()
-            for (i in 0 until 100) {
-                val position = (i / 100f + time * 0.15f) % 1f
-                val scaledPos = position * (colors.size - 1)
+            List(GRADIENT_STOPS) { i ->
+                val position = (i / GRADIENT_STOPS.toFloat() + time * 0.15f) % 1f
+                val scaledPos = position * (RAINBOW_COLORS.size - 1)
                 val index = scaledPos.toInt()
                 val fraction = scaledPos - index
-                val color1 = colors[index]
-                val color2 = colors[index + 1]
-                gradientColors.add(blendColors(color1, color2, fraction))
+                blendColors(RAINBOW_COLORS[index], RAINBOW_COLORS[index + 1], fraction)
             }
-            gradientColors
         }
 
         val gradientBrush = Brush.linearGradient(

@@ -1,5 +1,6 @@
 package com.retrivedmods.wclient.game.world
 
+import android.util.Log
 import com.retrivedmods.wclient.game.GameSession
 import com.retrivedmods.wclient.game.entity.Entity
 import com.retrivedmods.wclient.game.entity.EntityUnknown
@@ -9,10 +10,17 @@ import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket
 import org.cloudburstmc.protocol.bedrock.packet.AddItemEntityPacket
 import org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
+import org.cloudburstmc.protocol.bedrock.packet.MobEffectPacket
+import org.cloudburstmc.protocol.bedrock.packet.MoveEntityAbsolutePacket
+import org.cloudburstmc.protocol.bedrock.packet.MoveEntityDeltaPacket
+import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerListPacket
 import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket
+import org.cloudburstmc.protocol.bedrock.packet.SetEntityDataPacket
+import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.TakeItemEntityPacket
+import org.cloudburstmc.protocol.bedrock.packet.UpdateAttributesPacket
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -92,10 +100,37 @@ class Level(val session: GameSession) {
                 }
             }
 
-            else -> {
-                entityMap.values.forEach { entity ->
-                    entity.onPacketBound(packet)
-                }
+            is MoveEntityAbsolutePacket,
+            is MoveEntityDeltaPacket,
+            is MovePlayerPacket,
+            is SetEntityDataPacket,
+            is UpdateAttributesPacket,
+            is SetEntityLinkPacket,
+            is MobEffectPacket -> dispatchToEntities(packet)
+
+            else -> {}
+        }
+    }
+
+    /**
+     * Antes esto se llamaba para TODO tipo de paquete (el else de arriba),
+     * recorriendo entityMap entero aunque ningún Entity reaccionara a ese
+     * paquete. Con muchos jugadores/mobs cerca eso es trabajo real en cada
+     * paquete que pasa por el relay. Ahora solo se llama para los tipos de
+     * paquete que Entity/Player realmente manejan, y el try/catch evita que
+     * un solo entity con datos raros tire abajo el procesamiento del resto
+     * (y de los módulos, que corren después en GameSession).
+     */
+    private fun dispatchToEntities(packet: BedrockPacket) {
+        entityMap.values.forEach { entity ->
+            try {
+                entity.onPacketBound(packet)
+            } catch (e: Exception) {
+                Log.e(
+                    "Level",
+                    "Entity ${entity.runtimeEntityId} (${entity::class.simpleName}) failed to handle ${packet::class.simpleName}",
+                    e
+                )
             }
         }
     }
