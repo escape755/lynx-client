@@ -34,16 +34,10 @@ class AutoRespawnModule : Module("auto_respawn", ModuleCategory.Misc) {
 
         val packet = interceptablePacket.packet
         if (packet !is RespawnPacket) return
-
-        // Temporary visibility: log every RespawnPacket we see, matched or not,
-        // so we can tell from the in-game chat whether this is (a) never
-        // seeing the packet, (b) an ID mismatch, or (c) sending CLIENT_READY
-        // but the real Minecraft app's own death screen just not caring.
-        session.displayClientMessage(
-            "[AutoRespawn] state=${packet.state} pktId=${packet.runtimeEntityId} localId=${session.localPlayer.runtimeEntityId}"
-        )
-
-        if (packet.runtimeEntityId != session.localPlayer.runtimeEntityId) return
+        // The server sends SERVER_SEARCHING/SERVER_READY with runtimeEntityId=0
+        // regardless of the player's real ID (confirmed from a live diagnostic
+        // dump) - this connection only ever carries one player's respawn
+        // handshake, so there is nothing else to match against here.
         if (packet.state != RespawnPacket.State.SERVER_READY) return
 
         session.serverBound(RespawnPacket().apply {
