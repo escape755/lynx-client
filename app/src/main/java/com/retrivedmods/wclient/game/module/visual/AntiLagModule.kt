@@ -23,9 +23,9 @@ class AntiLagModule : Module("anti_lag", ModuleCategory.Visual) {
     private val combatHits by boolValue("Combat Hits", true)
     private val blockBreakChunks by boolValue("Block Break Chunks", true)
     private val customParticles by boolValue("Custom Particles", true)
-    private val potionAndWater by boolValue("Potion And Water", false)
-    private val ambient by boolValue("Ambient", false)
-    private val weatherParticles by boolValue("Weather Particles", false)
+    private val potionAndWater by boolValue("Potion And Water", true)
+    private val ambient by boolValue("Ambient", true)
+    private val weatherParticles by boolValue("Weather Particles", true)
 
     private val explosionEvents = setOf(
         LevelEvent.PARTICLE_EXPLOSION,
