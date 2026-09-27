@@ -20,13 +20,13 @@ class FastCommandModule : Module("FastCommand", ModuleCategory.Misc) {
         super.onEnabled()
 
         if (!isSessionCreated) {
-            isEnabled = false
+            disableSilently()
             return
         }
 
         val typed = command.trim()
         if (typed.isEmpty()) {
-            isEnabled = false
+            disableSilently()
             return
         }
 
@@ -38,7 +38,7 @@ class FastCommandModule : Module("FastCommand", ModuleCategory.Misc) {
         }
 
         // se comporta como un botón, no como un toggle que se queda prendido
-        isEnabled = false
+        disableSilently()
     }
 
     private fun sendCommand(text: String) {
