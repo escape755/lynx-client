@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -103,7 +104,11 @@ class OverlayClickGUI : OverlayWindow() {
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                 ) {
                     OverlayManager.dismissOverlayWindow(this)
-                },
+                }
+                // Cuando aparece el teclado, el panel se acomoda en el espacio que
+                // queda libre en vez de quedar tapado (el fondo oscuro sigue
+                // cubriendo toda la pantalla porque va antes en la cadena).
+                .imePadding(),
             contentAlignment = Alignment.Center
         ) {
             Box(

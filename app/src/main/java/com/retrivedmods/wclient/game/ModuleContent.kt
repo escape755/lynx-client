@@ -17,6 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -33,12 +35,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.alpha
@@ -46,8 +51,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,6 +65,7 @@ import com.retrivedmods.wclient.R
 import com.retrivedmods.wclient.overlay.OverlayManager
 import com.retrivedmods.wclient.util.translatedSelf
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.first
 
 
 private val DarkBackground = Color(0xFFFFFFFF)
@@ -426,8 +436,36 @@ private fun <T : Enum<T>> EnumValueContent(value: EnumValue<T>) {
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun StringValueContent(value: StringValue) {
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val windowInfo = LocalWindowInfo.current
+    val hasFocus = remember { mutableStateOf(false) }
+
+    // Compose pide el teclado en el mismo instante en que el campo recibe foco,
+    // pero en ese momento la ventana overlay todavía es NOT_FOCUSABLE (recién se
+    // está cambiando) y Android descarta el pedido. Cuando la ventana ya ganó
+    // foco de verdad, se vuelve a pedir.
+    LaunchedEffect(hasFocus.value) {
+        if (hasFocus.value) {
+            snapshotFlow { windowInfo.isWindowFocused }.first { it }
+            keyboardController?.show()
+        }
+    }
+
+    // Si el campo enfocado sale de la composición (cambio de categoría, scroll,
+    // cierre del menú) puede que nunca llegue onFocusChanged(false): se suelta
+    // el foco de la ventana a mano, pero solo si este campo era el enfocado.
+    DisposableEffect(Unit) {
+        onDispose {
+            if (hasFocus.value) {
+                com.retrivedmods.wclient.overlay.OverlayManager.setClickGuiFocusable(false)
+            }
+        }
+    }
+
     Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) {
         Text(
             value.name.translatedSelf,
@@ -442,8 +480,18 @@ private fun StringValueContent(value: StringValue) {
             modifier = Modifier
                 .fillMaxWidth()
                 .onFocusChanged { state ->
+                    hasFocus.value = state.isFocused
                     com.retrivedmods.wclient.overlay.OverlayManager.setClickGuiFocusable(state.isFocused)
                 },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    keyboardController?.hide()
+                    // Soltar el foco devuelve la ventana a NOT_FOCUSABLE y el
+                    // control al juego en cuanto se termina de escribir.
+                    focusManager.clearFocus()
+                }
+            ),
             enabled = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = AccentPrimary,
