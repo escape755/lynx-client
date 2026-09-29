@@ -43,7 +43,7 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
     private var descentSpeed by floatValue("Descent Speed", 4.2997f, 0.1f..5.0f)
     private var descentH by floatValue("Descent Horizontal", 1.1f, 0.1f..3.0f)
     private var descensoAlternado by boolValue("Descenso Alternado", true)
-    private var holdOffMs by floatValue("Hold-off (ms)", 450f, 100f..1000f)
+    private var holdOffMs by floatValue("Hold-off (ms)", 650f, 100f..1200f)
     private var chunkRadius by intValue("Chunk Radius", 2, 1..4)
 
     private var bypassPhase = false
@@ -52,6 +52,7 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
     private var smoothedSpeed: Float? = null
     private var smoothedVy: Float? = null
     private var holdOffUntilNs = 0L
+    private var wasHoldingOff = false
 
     override fun onEnabled() {
         super.onEnabled()
@@ -59,6 +60,7 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
         smoothedSpeed = null
         smoothedVy = null
         holdOffUntilNs = 0L
+        wasHoldingOff = false
     }
 
     override fun onDisabled() {
@@ -67,6 +69,7 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
         smoothedSpeed = null
         smoothedVy = null
         holdOffUntilNs = 0L
+        wasHoldingOff = false
     }
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
@@ -102,6 +105,48 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
 
     private fun tick(packet: PlayerAuthInputPacket, now: Long) {
         val holdingOff = now < holdOffUntilNs
+        if (holdingOff) {
+            // No mandamos NADA de movimiento inventado durante esta ventana -
+            // que el servidor procese el golpe/knockback sin que nosotros
+            // sigamos empujando encima. bypassPhase se resetea para no
+            // arrancar una fase nueva a mitad del hold-off.
+            //
+            // OJO: smoothedSpeed/smoothedVy YA NO se pierden aquí (antes se
+            // ponían a null). Durante este hold-off el cliente cae/se mueve
+            // con su física REAL (nosotros no mandamos nada), así que esos
+            // valores quedan desfasados - pero perderlos del todo era peor:
+            // ver el comentario en la rama de abajo.
+            bypassPhase = false
+            wasHoldingOff = true
+            return
+        }
+
+        if (wasHoldingOff) {
+            // El hold-off acaba de terminar. Antes, smoothedVy/smoothedSpeed
+            // llegaban en null y la fórmula de suavizado de más abajo,
+            // `(smoothedVy ?: vy).let { it + (vy - it) * 0.6f }`, con null
+            // colapsa a `vy` exacto: el PRIMER paquete tras el hold-off ya
+            // reporta la velocidad objetivo completa, sin transición.
+            // Verificado: tras 650ms cayendo con gravedad real la velocidad
+            // real ronda -0.92 bloques/tick; el paquete siguiente reportaba
+            // -0.1266 (glide) de golpe -> un salto de ~0.79 bloques/tick en
+            // un solo tick, físicamente imposible sin tocar el suelo, justo
+            // en el instante en que el jugador acaba de recibir un golpe
+            // (cuando más atención presta cualquier validación de movimiento
+            // del servidor). Eso es un lagback provocado por el propio
+            // mecanismo pensado para evitarlo.
+            //
+            // Arreglo: sembrar el suavizado con la velocidad REAL observada
+            // (motionX/Y/Z de localPlayer, ya actualizada para este mismo
+            // PlayerAuthInputPacket por GameSession antes de que el módulo
+            // corra) en vez de con null, para que la rampa de suavizado de
+            // abajo arranque desde donde el jugador está de verdad.
+            val lp = session.localPlayer
+            smoothedVy = lp.motionY
+            smoothedSpeed = sqrt(lp.motionX * lp.motionX + lp.motionZ * lp.motionZ)
+            wasHoldingOff = false
+        }
+
         val input = packet.inputData
         val pos = packet.position
 
@@ -121,22 +166,17 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
         val moving = w || a || s || d
 
         var bypassActive = false
-        if (!holdingOff) {
-            if (space && moving) {
-                bypassPhase = true
-                phaseStartNs = now
-                bypassActive = true
-            } else if (bypassPhase) {
-                bypassActive = true
-                val secs = (now - phaseStartNs) / 1e9f
-                if (secs >= releaseDelay) {
-                    bypassPhase = false
-                    bypassActive = false
-                }
+        if (space && moving) {
+            bypassPhase = true
+            phaseStartNs = now
+            bypassActive = true
+        } else if (bypassPhase) {
+            bypassActive = true
+            val secs = (now - phaseStartNs) / 1e9f
+            if (secs >= releaseDelay) {
+                bypassPhase = false
+                bypassActive = false
             }
-        } else {
-            // durante el hold-off no arrancamos ni sostenemos una fase nueva
-            bypassPhase = false
         }
 
         val vy: Float = if (shift) {
@@ -144,10 +184,7 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
         } else {
             glide + (if (space) (if (bypassActive) bypV else normV) else 0f)
         }
-        // convergencia mas rapida durante el hold-off, para soltar cualquier
-        // resto de velocidad "bypass" antes de que el servidor corrija
-        val vyRate = if (holdingOff) 0.9f else 0.6f
-        val smoothVy = (smoothedVy ?: vy).let { it + (vy - it) * vyRate }
+        val smoothVy = (smoothedVy ?: vy).let { it + (vy - it) * 0.6f }
         smoothedVy = smoothVy
 
         if (!moving) {
@@ -174,8 +211,7 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
             bypassActive -> bypH
             else -> normH
         }
-        val speedRate = if (holdingOff) 0.9f else 0.6f
-        val smoothSpeed = (smoothedSpeed ?: speed).let { it + (speed - it) * speedRate }
+        val smoothSpeed = (smoothedSpeed ?: speed).let { it + (speed - it) * 0.6f }
         smoothedSpeed = smoothSpeed
 
         if (shift && descensoAlternado) {

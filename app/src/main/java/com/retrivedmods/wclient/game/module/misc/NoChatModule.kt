@@ -20,7 +20,12 @@ class NoChatModule : Module("no_chat", ModuleCategory.Misc) {
         }
 
         val packet = interceptablePacket.packet
-        if (packet is TextPacket) {
+
+        // Solo se filtra lo que llega del servidor. TextPacket viaja también del
+        // juego al servidor: sin este filtro "block_player_chat" (activo por
+        // defecto) descartaba lo que escribe el propio jugador, incluidos los
+        // comandos ".xxx" según el orden de módulos.
+        if (packet is TextPacket && interceptablePacket.fromServer) {
             if (blockAllChat) {
                 interceptablePacket.intercept()
                 return

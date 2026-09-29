@@ -55,7 +55,7 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
 
     private val targetModes = listOf(Mode("Single", 0), Mode("Multi", 1))
     private val rotationModes = listOf(
-        Mode("Unified", 9), Mode("None", 0), Mode("Silent", 1), Mode("Strafe", 2), Mode("FrontStrafe", 3),
+        Mode("Predictive", ROT_PREDICTIVE), Mode("Unified", 9), Mode("None", 0), Mode("Silent", 1), Mode("Strafe", 2), Mode("FrontStrafe", 3),
         Mode("AirHvH Pro", 4), Mode("Adaptive", 5), Mode("Apex", 6), Mode("Spectre", 7), Mode("Aegis", 8)
     )
     private val switchModes = listOf(Mode("None", 0), Mode("Full", 1), Mode("Silent", 2))
@@ -245,6 +245,18 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
     private var rainMode by boolValue("Rain Mode", false)
     private var vertOffset by floatValue("Vertical Offset", 0.3f, -1.0f..1.0f)
 
+    // Solo aplican con Rotation = Predictive (ver PredictiveAim.kt / PredictiveRotator.kt)
+    private var predTime by floatValue("Pred Time", 2.0f, 0.0f..8.0f)
+    private var predStrength by floatValue("Pred Strength", 1.0f, 0.0f..1.5f)
+    private var rotSmoothing by floatValue("Rot Smoothing", 0.35f, 0.05f..1.0f)
+    private var rotMaxSpeed by floatValue("Rot Max Speed", 30.0f, 5.0f..90.0f)
+    private var rotAccel by floatValue("Rot Accel", 12.0f, 2.0f..60.0f)
+    // Camera Sync: ademas de la rotacion enviada al servidor, gira la camara visible del cliente.
+    private var cameraSync by boolValue("Camera Sync", true)
+    // Los jugadores llegan por red con la Y a nivel de ojos (pies + 1.62); se resta para obtener los
+    // pies. Si la camara mira demasiado alto/bajo, ajustalo (0 = ya vienen a nivel de pies).
+    private var playerYOffset by floatValue("Player Y Offset", 1.62f, 0.0f..1.7f)
+
     // sin registrar en Rooster (fidelidad): fijos 100% / off
     private val hitChance = 100
     private val hitChanceGate = false
@@ -273,6 +285,7 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
     private val mAegis = AegisState()
 
     private var lastInput: Set<PlayerAuthInputData> = emptySet()
+    private val predRot = PredictiveRotator()
 
     // ===== shared helpers (exact) =====
     private fun gameTimeSec(): Float = System.nanoTime() / 1e9f
@@ -331,7 +344,7 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
     private fun asin(d: Double): Double = kotlin.math.asin(d.coerceIn(-1.0, 1.0))
     private fun asin(f: Float): Float = kotlin.math.asin(f) // raw: NaN propagates like the binary
 
-    private fun hurtTimeOf(e: Entity): Int = (e.metadata[EntityDataTypes.HURT_TICKS] as? Int) ?: 0
+    private fun hurtTimeOf(e: Entity): Int = e.hurtTicks
     // Esta versión del protocolo no trae EntityFlag.ON_GROUND (no existe en este
     // WClient) — se aproxima por velocidad vertical, suficiente para el uso que le
     // da este módulo (una señal más entre varias, no una condición crítica).
@@ -394,6 +407,7 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
             rotOut[1] = session.localPlayer.rotationYaw
             rotCtx[0] = rotOut[0]; rotCtx[1] = rotOut[1]
         }
+        predRot.reset()
     }
 
     override fun onDisabled() {
@@ -401,6 +415,7 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
         targets.clear()
         tickCtr = 0
         resetPerTargetState()
+        predRot.reset()
     }
 
     // =======================================================================
@@ -494,7 +509,7 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
             }
 
             is MovePlayerPacket -> {
-                if (isEnabled && targets.isNotEmpty() && rotationMode >= 1 && rotationMode != 2 &&
+                if (isEnabled && shouldOverrideRotation() &&
                     packet.runtimeEntityId == session.localPlayer.runtimeEntityId &&
                     rotOut[0].isFinite() && rotOut[1].isFinite()
                 ) {
@@ -527,6 +542,7 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
 
         // FASE find
         updateTargets(localPlayer)
+        runPredictive(packet)
 
         tickCtr++
         if (targets.isEmpty()) return
@@ -589,6 +605,12 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
             }
         }.onFailure {
             println("Plus999 rotation mode $rotationMode error: ${it.stackTraceToString()}")
+        }
+        if (rotationMode == ROT_PREDICTIVE && predRot.isOverriding) {
+            // la fase "base aim" de arriba escribe rotOut para todos los modos; Predictive lo repone
+            rotOut[0] = predRot.pitch
+            rotOut[1] = predRot.yaw
+            rotCtx[0] = rotOut[0]; rotCtx[1] = rotOut[1]
         }
 
         // FASE atk
@@ -2013,12 +2035,48 @@ class LynxAuraProModule : Module("LynxAuraPro", ModuleCategory.Combat) {
     // PAIP spoof — onSendPacket equivalent (spec §5 gate)
     // =======================================================================
 
-    private fun spoofRotation(packet: PlayerAuthInputPacket) {
-        if (targets.isEmpty()) return
+    // Predictive sigue sobreescribiendo mientras vuelve suavemente a la camara real,
+    // aunque ya no queden objetivos; el resto de modos, como antes.
+    private fun shouldOverrideRotation(): Boolean {
         val mode = rotationMode
-        if (mode < 1 || mode == 2) return // None y Strafe no spoofean
+        if (mode == ROT_PREDICTIVE) return predRot.isOverriding
+        return targets.isNotEmpty() && mode >= 1 && mode != 2 // None y Strafe no spoofean
+    }
+
+    private fun spoofRotation(packet: PlayerAuthInputPacket) {
+        if (!shouldOverrideRotation()) return
         if (!rotOut[0].isFinite() || !rotOut[1].isFinite()) return
 
         packet.rotation = Vector3f.from(rotOut[0], rotOut[1], rotOut[1])
+    }
+
+    // Predictive: corre en CADA tick (Interval y el hurttime no lo congelan) y deja el objetivo
+    // bloqueado en targets[0], el mismo que ataca el modulo.
+    private fun runPredictive(packet: PlayerAuthInputPacket) {
+        if (rotationMode != ROT_PREDICTIVE) {
+            if (predRot.isOverriding) predRot.reset() // se cambio de modo mientras estaba activo
+            return
+        }
+        val settings = PredictiveRotator.Settings(
+            predTime = predTime,
+            predStrength = predStrength,
+            smoothing = rotSmoothing,
+            maxSpeed = rotMaxSpeed,
+            accel = rotAccel,
+            cameraSync = cameraSync,
+            playerYOffset = playerYOffset,
+            vertOffset = vertOffset
+        )
+        runCatching { predRot.update(session, packet, targets, settings) }
+            .onFailure { println("Plus999 predictive error: ${it.stackTraceToString()}") }
+        if (predRot.isOverriding) {
+            rotOut[0] = predRot.pitch
+            rotOut[1] = predRot.yaw
+            rotCtx[0] = rotOut[0]; rotCtx[1] = rotOut[1]
+        }
+    }
+
+    private companion object {
+        const val ROT_PREDICTIVE = 10
     }
 }

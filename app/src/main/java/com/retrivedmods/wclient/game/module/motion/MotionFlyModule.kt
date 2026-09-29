@@ -11,6 +11,7 @@ import org.cloudburstmc.protocol.bedrock.data.PlayerPermission
 import org.cloudburstmc.protocol.bedrock.data.command.CommandPermission
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityMotionPacket
+import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.UpdateAbilitiesPacket
 import kotlin.math.cos
 import kotlin.math.sin
@@ -88,8 +89,17 @@ class MotionFlyModule : Module("MotionFly", ModuleCategory.Motion) {
         }
     }
 
+    override fun onDisconnect(reason: String) {
+        canFly = false
+    }
+
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         val packet = interceptablePacket.packet
+        if (packet is StartGamePacket) {
+            // mundo nuevo: las habilidades aplicadas ya no existen en el cliente
+            canFly = false
+            return
+        }
         if (!isEnabled || packet !is PlayerAuthInputPacket) return
 
         applyFlyAbilities(true)

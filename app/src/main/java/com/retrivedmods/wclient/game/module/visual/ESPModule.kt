@@ -68,19 +68,18 @@ class ESPModule : Module("esp", ModuleCategory.Visual) {
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         val packet = interceptablePacket.packet
 
+        // entityMap está indexado por runtimeEntityId: lookup directo en vez de
+        // recorrer todas las entidades por cada paquete de equipamiento (con
+        // muchos jugadores cerca estos paquetes son frecuentes).
         when (packet) {
             is MobArmorEquipmentPacket -> {
-                val entity = session.level.entityMap.values.firstOrNull {
-                    it.runtimeEntityId == packet.runtimeEntityId
-                } ?: return
+                val entity = session.level.entityMap[packet.runtimeEntityId] ?: return
 
                 entity.inventory.onPacketBound(packet)
             }
 
             is MobEquipmentPacket -> {
-                val entity = session.level.entityMap.values.firstOrNull {
-                    it.runtimeEntityId == packet.runtimeEntityId
-                } ?: return
+                val entity = session.level.entityMap[packet.runtimeEntityId] ?: return
 
                 entity.inventory.onPacketBound(packet)
             }

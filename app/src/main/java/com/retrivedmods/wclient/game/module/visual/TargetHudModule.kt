@@ -49,6 +49,7 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
 
     override fun onDisabled() {
         super.onDisabled()
+        hudShown = false
         if (isSessionCreated) {
             scope.launch {
                 try {
@@ -59,19 +60,46 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
         }
     }
 
+    private var lastUpdateTime = 0L
+    private val updateIntervalMs = 150L
+
+    // true mientras la ventana del HUD está (o se pidió que esté) visible.
+    // Se toca desde los dos hilos de red, de ahí el @Volatile.
+    @Volatile
+    private var hudShown = false
+
+    /**
+     * Pide ocultar el HUD SOLO si estaba visible. Antes, con el módulo apagado
+     * (el estado por defecto), beforePacketBound lanzaba una corrutina en el
+     * hilo principal (Dispatchers.Main) con dismissTargetHud() por CADA paquete
+     * de la conexión, en ambos sentidos. Cada una acababa en
+     * WindowManager.removeView() sobre una vista que no estaba adjunta, que
+     * lanza (y se traga) una IllegalArgumentException con su stack trace. El
+     * número de paquetes crece con la cantidad de jugadores/entidades cerca, así
+     * que el hilo de UI (overlays, ClickGUI) se saturaba justo en esas escenas.
+     */
+    private fun hideHudIfShown() {
+        if (!hudShown) return
+        hudShown = false
+        scope.launch {
+            try {
+                TargetHudOverlay.dismissTargetHud()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled || !isSessionCreated) {
-            scope.launch {
-                try {
-                    TargetHudOverlay.dismissTargetHud()
-                } catch (_: Exception) {
-                }
-            }
+            hideHudIfShown()
             return
         }
 
-        val closestEntities = searchForClosestEntities()
-        val closestEntity = closestEntities.firstOrNull()
+        val now = System.currentTimeMillis()
+        if (now - lastUpdateTime < updateIntervalMs) return
+        lastUpdateTime = now
+
+        val closestEntity = findClosestTarget()
 
         if (closestEntity != null) {
             val username = getEntityName(closestEntity)
@@ -80,6 +108,7 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
                 session.level.playerMap[closestEntity.uuid]?.skin
             } else null
 
+            hudShown = true
             scope.launch {
                 try {
                     TargetHudOverlay.showTargetHud(username, skinData, distance, maxDistance, 0f)
@@ -87,12 +116,7 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
                 }
             }
         } else {
-            scope.launch {
-                try {
-                    TargetHudOverlay.dismissTargetHud()
-                } catch (_: Exception) {
-                }
-            }
+            hideHudIfShown()
         }
     }
 
@@ -133,16 +157,14 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
         return (playerData?.name?.toString() ?: "").isBlank()
     }
 
-    private fun searchForClosestEntities(): List<Entity> {
+    private fun findClosestTarget(): Entity? {
         return session.level.entityMap.values
-            .filter { entity ->
-                val distance = entity.distance(session.localPlayer)
-                val inRange = distance < rangeValue
-                val isTarget = entity.isTarget()
-                inRange && isTarget
-            }
-            .sortedBy { it.distance(session.localPlayer) }
-            .take(1)
+            .asSequence()
+            .filter { it.isTarget() }
+            .map { it to it.distance(session.localPlayer) }
+            .filter { (_, distance) -> distance < rangeValue }
+            .minByOrNull { it.second }
+            ?.first
     }
 
     private fun getEntityName(entity: Entity): String {

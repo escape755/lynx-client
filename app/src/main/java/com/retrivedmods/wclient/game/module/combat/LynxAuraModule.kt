@@ -40,7 +40,9 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
     // --- named selectors (horizontal chip list in the UI) ---
     private class Mode(override val name: String, val idx: Int) : ListItem
 
-    private val rotModes = listOf(Mode("Unified", 3), Mode("None", 0), Mode("Normal", 1), Mode("Strafe", 2))
+    private val rotModes = listOf(
+        Mode("Predictive", ROT_PREDICTIVE), Mode("Unified", 3), Mode("None", 0), Mode("Normal", 1), Mode("Strafe", 2)
+    )
     private val hitTypes = listOf(Mode("Single", 0), Mode("Multi", 1))
     private val targetPriorities = listOf(Mode("Distance", 0), Mode("Health", 1))
     private val weaponModes = listOf(Mode("None", 0), Mode("Switch", 1), Mode("Spoof", 2))
@@ -52,6 +54,19 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
     private var java by boolValue("Java Cooldown", true)
     private var rotModeItem by listValue("Rotations", rotModes[0], rotModes.toSet())
     private var rotationSpeed by intValue("Rot Speed", 10, 10..180)
+
+    // Solo aplican con Rotations = Predictive (ver PredictiveAim.kt / PredictiveRotator.kt)
+    private var predTime by floatValue("Pred Time", 2.0f, 0.0f..8.0f)
+    private var predStrength by floatValue("Pred Strength", 1.0f, 0.0f..1.5f)
+    private var rotSmoothing by floatValue("Rot Smoothing", 0.35f, 0.05f..1.0f)
+    private var rotMaxSpeed by floatValue("Rot Max Speed", 30.0f, 5.0f..90.0f)
+    private var rotAccel by floatValue("Rot Accel", 12.0f, 2.0f..60.0f)
+    private var vertOffset by floatValue("Vertical Offset", 0.3f, -1.0f..1.0f)
+    // Camera Sync: ademas de la rotacion enviada al servidor, gira la camara visible del cliente.
+    private var cameraSync by boolValue("Camera Sync", true)
+    // Los jugadores llegan por red con la Y a nivel de ojos (pies + 1.62); se resta para obtener los
+    // pies. Si la camara mira demasiado alto/bajo, ajustalo (0 = ya vienen a nivel de pies).
+    private var playerYOffset by floatValue("Player Y Offset", 1.62f, 0.0f..1.7f)
 
     private var adaptiveRot by boolValue("Adaptive Rot", false)
     private var shouldCriticals by boolValue("Packet Criticals", false)
@@ -94,6 +109,8 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
     private var timePassed = 0L
     private var lastTickTime = 0L
     private var usingItemTicks = 0
+    private val predRot = PredictiveRotator()
+    private val noTargets = ArrayList<Entity>()
 
     private var lastDebugMsg: String? = null
     private fun dbg(msg: String) {
@@ -107,6 +124,7 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
         super.onEnabled()
         targetYaw = 0f; currentYaw = 0f; targetPitch = 0f; currentPitch = 0f
         critPend = false; critDip = 0f
+        predRot.reset()
     }
 
     override fun onDisabled() {
@@ -115,6 +133,7 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
         shouldRot = false
         targetYaw = 0f; currentYaw = 0f; targetPitch = 0f; currentPitch = 0f
         critPend = false; critDip = 0f
+        predRot.reset()
     }
 
     private fun Entity.isMob(): Boolean =
@@ -252,6 +271,7 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
                 usingItemTicks--
                 shouldRot = false
                 critDip = 0f
+                runPredictive(packet, noTargets)
                 return
             }
         }
@@ -262,7 +282,7 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
             val isMob = entity.isMob()
             if (!isPlayer && !isMob) continue
             if (!isPlayer && !includeMobs) continue
-            if (hurtTimeCheck && ((entity.metadata[EntityDataTypes.HURT_TICKS] as? Int) ?: 0) > 0) continue
+            if (hurtTimeCheck && entity.hurtTicks > 0) continue
             targetList.add(entity)
         }
 
@@ -270,6 +290,7 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
             dbg("sin objetivos en rango (${range})")
             shouldRot = false
             critDip = 0f
+            runPredictive(packet, targetList)
             return
         }
 
@@ -278,6 +299,10 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
         } else {
             targetList.sortBy { it.distance(localPlayer.vec3Position) }
         }
+
+        // Predictive corre en CADA tick (antes del ataque) y deja el objetivo bloqueado en [0],
+        // asi la camara y el golpe apuntan siempre al mismo jugador.
+        runPredictive(packet, targetList)
 
         val first = targetList[0]
         val (width, height) = targetDims(first)
@@ -364,7 +389,54 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
         hotbarSlot = slot
     }
 
+    private fun runPredictive(packet: PlayerAuthInputPacket, list: MutableList<Entity>) {
+        if (rotMode != ROT_PREDICTIVE) return
+        val settings = PredictiveRotator.Settings(
+            predTime = predTime,
+            predStrength = predStrength,
+            smoothing = rotSmoothing,
+            maxSpeed = rotMaxSpeed,
+            accel = rotAccel,
+            cameraSync = cameraSync,
+            playerYOffset = playerYOffset,
+            vertOffset = vertOffset
+        )
+        // Con prioridad por vida se respeta estrictamente el orden del modulo (sin histeresis).
+        val overriding = runCatching {
+            predRot.update(session, packet, list, settings, hysteresis = targetPriority == 0)
+        }.getOrDefault(false)
+        if (overriding) {
+            currentPitch = predRot.pitch
+            currentYaw = predRot.yaw
+        }
+    }
+
+    private fun applyCriticalDip(packet: PlayerAuthInputPacket) {
+        if (shouldCriticals && shouldRot) {
+            packet.position = Vector3f.from(
+                packet.position.x, packet.position.y - critDip, packet.position.z
+            )
+            critDip += 0.012f
+            if (critDip >= 0.24f) critDip = 0f
+        }
+        critPend = false
+    }
+
     private fun spoofRotation(packet: PlayerAuthInputPacket) {
+        if (rotMode == ROT_PREDICTIVE) {
+            // Sigue sobreescribiendo mientras vuelve suavemente a la camara real, aunque ya no queden objetivos.
+            if (!isEnabled) {
+                if (predRot.isOverriding) predRot.reset()
+                return
+            }
+            if (predRot.isOverriding) {
+                packet.rotation = Vector3f.from(predRot.pitch, predRot.yaw, predRot.yaw)
+                applyCriticalDip(packet)
+            }
+            return
+        }
+        if (predRot.isOverriding) predRot.reset() // se cambio de modo mientras estaba activo
+
         if (!shouldRot || targetList.isEmpty()) return
 
         if (rotMode == 3) {
@@ -426,14 +498,7 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
             packet.rotation = Vector3f.from(90f, packet.rotation.y, currentYaw)
         }
 
-        if (shouldCriticals && shouldRot) {
-            packet.position = Vector3f.from(
-                packet.position.x, packet.position.y - critDip, packet.position.z
-            )
-            critDip += 0.012f
-            if (critDip >= 0.24f) critDip = 0f
-        }
-        critPend = false
+        applyCriticalDip(packet)
     }
 
     private fun targetDims(entity: Entity): Pair<Float, Float> {
@@ -444,4 +509,8 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
 
     private fun randomFloat(low: Float, high: Float): Float =
         if (high <= low) low else low + Math.random().toFloat() * (high - low)
+
+    private companion object {
+        const val ROT_PREDICTIVE = 4
+    }
 }

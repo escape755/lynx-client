@@ -6,6 +6,7 @@ import org.cloudburstmc.math.vector.Vector2f
 import org.cloudburstmc.math.vector.Vector3f
 import org.cloudburstmc.protocol.bedrock.data.AttributeData
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityDataMap
+import org.cloudburstmc.protocol.bedrock.data.entity.EntityDataTypes
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
@@ -15,6 +16,7 @@ import org.cloudburstmc.protocol.bedrock.packet.MoveEntityDeltaPacket
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityDataPacket
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket
 import org.cloudburstmc.protocol.bedrock.packet.UpdateAttributesPacket
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.sqrt
 
 @Suppress("MemberVisibilityCanBePrivate")
@@ -94,7 +96,12 @@ open class Entity(open val runtimeEntityId: Long, open val uniqueEntityId: Long)
 
     open val metadata = EntityDataMap()
 
-    private val effects = mutableListOf<Effect>()
+    // Se itera en el setter de tickExists (hilo de PlayerAuthInput, ~20 Hz) y se
+    // modifica al llegar MobEffectPacket (hilo del servidor). Con un ArrayList
+    // normal eso puede lanzar ConcurrentModificationException dentro de
+    // LocalPlayer.onPacketBound y abortar el resto del procesamiento de ese
+    // paquete. CopyOnWriteArrayList itera sobre una copia consistente.
+    private val effects = CopyOnWriteArrayList<Effect>()
 
     val vec3Position: Vector3f
         get() = Vector3f.from(posX, posY, posZ)
@@ -115,6 +122,29 @@ open class Entity(open val runtimeEntityId: Long, open val uniqueEntityId: Long)
         get() = metadata.flags.contains(EntityFlag.GLIDING)
 
     open val inventory = EntityInventory(this)
+
+    /** nanoTime del último SetEntityData/AddEntity que trajo la clave HURT_TICKS. */
+    @Volatile
+    private var hurtTicksUpdatedAtNs = 0L
+
+    /**
+     * Hurt-time vigente de la entidad, en ticks (0 = no está en periodo de
+     * invulnerabilidad tras un golpe).
+     *
+     * metadata[HURT_TICKS] solo cambia cuando el servidor lo reenvía; el cliente
+     * (este relay) no lo decrementa. Si el servidor manda el valor inicial y no
+     * manda el 0 final, leerlo directo deja el último valor para siempre y los
+     * módulos que descartan objetivos con hurt-time > 0 dejan de atacar a
+     * cualquier jugador que haya sido golpeado alguna vez. Aquí el valor
+     * decae 1 por cada 50 ms transcurridos desde que se recibió.
+     */
+    val hurtTicks: Int
+        get() {
+            val raw = (metadata[EntityDataTypes.HURT_TICKS] as? Int) ?: return 0
+            if (raw <= 0) return 0
+            val ageTicks = ((System.nanoTime() - hurtTicksUpdatedAtNs) / 50_000_000L).toInt()
+            return (raw - ageTicks).coerceAtLeast(0)
+        }
 
     open fun move(x: Float, y: Float, z: Float) {
         this.posX = x
@@ -179,10 +209,15 @@ open class Entity(open val runtimeEntityId: Long, open val uniqueEntityId: Long)
                 if (packet.flags.contains(MoveEntityDeltaPacket.Flag.HAS_Y)) packet.y else posY,
                 if (packet.flags.contains(MoveEntityDeltaPacket.Flag.HAS_Z)) packet.z else posZ
             )
+            // yaw/pitch/headYaw de MoveEntityDeltaPacket son ángulos ABSOLUTOS
+            // (helper.readByteAngle), no incrementos: las flags solo indican qué
+            // componentes vienen en el paquete. Antes se SUMABAN al valor actual,
+            // por lo que la rotación rastreada de cada jugador crecía sin límite
+            // con cada paquete de movimiento.
             rotate(
-                rotationYaw + if (packet.flags.contains(MoveEntityDeltaPacket.Flag.HAS_YAW)) packet.yaw else 0f,
-                rotationPitch + if (packet.flags.contains(MoveEntityDeltaPacket.Flag.HAS_PITCH)) packet.pitch else 0f,
-                rotationYawHead + if (packet.flags.contains(MoveEntityDeltaPacket.Flag.HAS_HEAD_YAW)) packet.headYaw else 0f
+                if (packet.flags.contains(MoveEntityDeltaPacket.Flag.HAS_YAW)) packet.yaw else rotationYaw,
+                if (packet.flags.contains(MoveEntityDeltaPacket.Flag.HAS_PITCH)) packet.pitch else rotationPitch,
+                if (packet.flags.contains(MoveEntityDeltaPacket.Flag.HAS_HEAD_YAW)) packet.headYaw else rotationYawHead
             )
             tickExists++
         } else if (packet is SetEntityDataPacket && packet.runtimeEntityId == runtimeEntityId) {
@@ -228,6 +263,9 @@ open class Entity(open val runtimeEntityId: Long, open val uniqueEntityId: Long)
     open fun onDisconnect() {}
 
     fun handleSetData(map: EntityDataMap) {
+        if (map.containsKey(EntityDataTypes.HURT_TICKS)) {
+            hurtTicksUpdatedAtNs = System.nanoTime()
+        }
         map.forEach { (key, value) ->
             metadata[key] = value
         }

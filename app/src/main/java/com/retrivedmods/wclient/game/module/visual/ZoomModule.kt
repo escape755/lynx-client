@@ -8,6 +8,7 @@ import org.cloudburstmc.protocol.bedrock.data.AbilityLayer
 import org.cloudburstmc.protocol.bedrock.data.PlayerPermission
 import org.cloudburstmc.protocol.bedrock.data.command.CommandPermission
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
+import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.UpdateAbilitiesPacket
 
 class ZoomModule : Module("zoom", ModuleCategory.Visual) {
@@ -58,8 +59,16 @@ class ZoomModule : Module("zoom", ModuleCategory.Visual) {
 
     private var isZoomEnabled = false
 
+    override fun onDisconnect(reason: String) {
+        isZoomEnabled = false
+    }
+
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         val packet = interceptablePacket.packet
+        if (packet is StartGamePacket) {
+            isZoomEnabled = false
+            return
+        }
         if (packet is PlayerAuthInputPacket) {
             if (!isZoomEnabled && isEnabled) {
                 // Enable zoom

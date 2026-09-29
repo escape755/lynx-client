@@ -15,6 +15,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ItemComponentPacket
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket
 import org.cloudburstmc.protocol.common.SimpleDefinitionRegistry
+import java.util.concurrent.ConcurrentHashMap
 
 @Suppress("MemberVisibilityCanBePrivate")
 class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
@@ -35,6 +36,29 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
     private var startGameReceived = false
 
+    // Última vez (nanoTime) que se informó de un fallo, por clave (nombre del
+    // módulo, "localPlayer", "level"...). Un módulo que falla en
+    // PlayerAuthInputPacket lo hace ~20 veces por segundo; sin límite, cada fallo
+    // enviaba un TextPacket al jugador y volcaba un stack trace a logcat: una
+    // tormenta de mensajes que empeora justo lo que se quería diagnosticar.
+    private val lastFailureReportNs = ConcurrentHashMap<String, Long>()
+
+    private fun reportFailure(key: String, packet: BedrockPacket, e: Exception, notifyPlayer: Boolean) {
+        val now = System.nanoTime()
+        val last = lastFailureReportNs[key]
+        if (last != null && now - last < FAILURE_REPORT_INTERVAL_NS) return
+        lastFailureReportNs[key] = now
+
+        Log.e("GameSession", "$key failed to handle ${packet::class.simpleName}", e)
+        if (notifyPlayer) {
+            displayClientMessage("[Lynx Client] $key crashed on ${packet::class.simpleName}: ${e.message}")
+        }
+    }
+
+    private companion object {
+        const val FAILURE_REPORT_INTERVAL_NS = 10_000_000_000L
+    }
+
     fun clientBound(packet: BedrockPacket) {
         wRelaySession.clientBound(packet)
     }
@@ -43,7 +67,32 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         wRelaySession.serverBound(packet)
     }
 
-    override fun beforePacketBound(packet: BedrockPacket): Boolean {
+    // ComposedPacketHandler fusiona los dos sentidos en beforePacketBound() y se
+    // pierde de dónde viene el paquete. Se sobrescriben los puntos de entrada
+    // reales del relay para conservarlo. OJO con los nombres: el relay llama
+    // beforeClientBound() para lo que ENVÍA EL JUEGO (ServerSession.onPacket) y
+    // beforeServerBound() para lo que ENVÍA EL SERVIDOR (ClientSession.onPacket).
+    override fun beforePacketBound(packet: BedrockPacket): Boolean =
+        process(packet, fromServer = false)
+
+    override fun beforeClientBound(packet: BedrockPacket): Boolean =
+        process(packet, fromServer = false)
+
+    override fun beforeServerBound(packet: BedrockPacket): Boolean =
+        process(packet, fromServer = true)
+
+    private fun process(packet: BedrockPacket, fromServer: Boolean): Boolean {
+        if (!PacketDiagnostics.enabled) return processPacket(packet, fromServer, false)
+
+        val start = System.nanoTime()
+        try {
+            return processPacket(packet, fromServer, true)
+        } finally {
+            PacketDiagnostics.recordPacket(packet, System.nanoTime() - start)
+        }
+    }
+
+    private fun processPacket(packet: BedrockPacket, fromServer: Boolean, diag: Boolean): Boolean {
         when (packet) {
             is StartGamePacket -> {
                 try {
@@ -90,17 +139,34 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
             }
         }
 
-        localPlayer.onPacketBound(packet)
-        level.onPacketBound(packet)
+        // Separados a propósito: antes compartían el mismo try, así que si
+        // localPlayer lanzaba (inventario, efectos...) level.onPacketBound no se
+        // ejecutaba para ese paquete y el mapa de entidades quedaba sin actualizar.
+        try {
+            localPlayer.onPacketBound(packet)
+        } catch (e: Exception) {
+            reportFailure("localPlayer", packet, e, notifyPlayer = false)
+        }
+        try {
+            level.onPacketBound(packet)
+        } catch (e: Exception) {
+            reportFailure("level", packet, e, notifyPlayer = false)
+        }
 
-        val interceptablePacket = InterceptablePacket(packet)
+        val interceptablePacket = InterceptablePacket(packet, fromServer)
 
         for (module in ModuleManager.modules) {
             // Set session if not already set
             if (!module.isSessionCreated) {
                 module.session = this
             }
-            module.beforePacketBound(interceptablePacket)
+            val moduleStart = if (diag) System.nanoTime() else 0L
+            try {
+                module.beforePacketBound(interceptablePacket)
+            } catch (e: Exception) {
+                reportFailure("Module ${module.name}", packet, e, notifyPlayer = true)
+            }
+            if (diag) PacketDiagnostics.recordModule(module.name, System.nanoTime() - moduleStart)
             if (interceptablePacket.isIntercepted) {
                 return true
             }
@@ -111,7 +177,11 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
     override fun afterPacketBound(packet: BedrockPacket) {
         for (module in ModuleManager.modules) {
-            module.afterPacketBound(packet)
+            try {
+                module.afterPacketBound(packet)
+            } catch (e: Exception) {
+                reportFailure("Module ${module.name} (afterPacketBound)", packet, e, notifyPlayer = false)
+            }
         }
     }
 
@@ -121,7 +191,13 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
         startGameReceived = false
 
         for (module in ModuleManager.modules) {
-            module.onDisconnect(reason)
+            // Un módulo que lance aquí no debe impedir que los siguientes
+            // limpien su estado (overlays, flags de habilidades, jobs...).
+            try {
+                module.onDisconnect(reason)
+            } catch (e: Exception) {
+                Log.e("GameSession", "Module ${module.name} failed in onDisconnect", e)
+            }
         }
     }
 

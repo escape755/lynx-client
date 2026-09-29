@@ -9,6 +9,7 @@ import org.cloudburstmc.protocol.bedrock.data.PlayerPermission
 import org.cloudburstmc.protocol.bedrock.data.command.CommandPermission
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 import org.cloudburstmc.protocol.bedrock.packet.RequestAbilityPacket
+import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.UpdateAbilitiesPacket
 import org.cloudburstmc.math.vector.Vector3f
 import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData
@@ -68,16 +69,36 @@ class FlyModule : Module("fly", ModuleCategory.Motion) {
 
     private var canFly = false
 
+    // Las habilidades que este módulo aplicó viven en el cliente del juego, no en
+    // este objeto: al empezar un mundo nuevo (StartGame tras un traslado/lobby) o
+    // reconectar, el flag debe volver a false para que se reenvíen.
+    override fun onDisconnect(reason: String) {
+        canFly = false
+    }
+
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         val packet = interceptablePacket.packet
-        if (packet is RequestAbilityPacket && packet.ability == Ability.FLYING) {
-            interceptablePacket.intercept()
+
+        if (packet is StartGamePacket) {
+            canFly = false
             return
         }
 
-        if (packet is UpdateAbilitiesPacket) {
-            interceptablePacket.intercept()
-            return
+        // Estas dos intercepciones NO estaban condicionadas a isEnabled: con Fly
+        // apagado se seguían descartando TODOS los UpdateAbilitiesPacket del
+        // servidor (el juego nunca recibía sus permisos/velocidades reales) y las
+        // peticiones legítimas de vuelo del cliente nunca llegaban al servidor,
+        // dejando cliente y servidor con estados de habilidades distintos.
+        if (isEnabled) {
+            if (packet is RequestAbilityPacket && packet.ability == Ability.FLYING) {
+                interceptablePacket.intercept()
+                return
+            }
+
+            if (packet is UpdateAbilitiesPacket) {
+                interceptablePacket.intercept()
+                return
+            }
         }
 
         if (packet is PlayerAuthInputPacket) {

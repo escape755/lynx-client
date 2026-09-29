@@ -4,6 +4,7 @@ import com.retrivedmods.wclient.game.InterceptablePacket
 import com.retrivedmods.wclient.game.Module
 import com.retrivedmods.wclient.game.ModuleCategory
 import com.retrivedmods.wclient.game.ModuleManager
+import com.retrivedmods.wclient.game.PacketDiagnostics
 import com.retrivedmods.wclient.game.friend.FriendManager
 import com.retrivedmods.wclient.game.entity.Player
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket
@@ -17,6 +18,13 @@ class CommandHandlerModule : Module("command_handler", ModuleCategory.Misc, true
 
         val packet = interceptablePacket.packet
         if (packet !is TextPacket) return
+
+        // Solo los mensajes que escribe el propio jugador (juego -> servidor).
+        // TextPacket también llega DEL servidor con el chat de los demás
+        // jugadores: antes, que otro jugador escribiera ".fly", ".esp" o
+        // ".friend clear" se interceptaba (desaparecía del chat) y se ejecutaba
+        // como comando en este cliente, activando/desactivando módulos propios.
+        if (interceptablePacket.fromServer) return
 
         val message = packet.message.toString()
         if (!message.startsWith(prefix)) return
@@ -33,6 +41,8 @@ class CommandHandlerModule : Module("command_handler", ModuleCategory.Misc, true
             "friend" -> handleFriendCommand(args)
 
             "replay" -> handleReplayCommand(args)
+
+            "diag" -> handleDiagCommand(args)
 
             else -> toggleModule(command)
         }
@@ -148,6 +158,30 @@ class CommandHandlerModule : Module("command_handler", ModuleCategory.Misc, true
             "save" -> replay.saveReplay(args.getOrNull(2) ?: return)
             "load" -> replay.loadReplay(args.getOrNull(2) ?: return)
             else -> session.displayClientMessage("§7.replay record | play | stop | save | load")
+        }
+    }
+
+    private fun handleDiagCommand(args: List<String>) {
+        when (args.getOrNull(1)?.lowercase()) {
+            "on" -> {
+                PacketDiagnostics.start()
+                session.displayClientMessage("§a[Diag] midiendo. Usa §f.diag report §ade vez en cuando y §f.diag off §apara parar")
+            }
+
+            "off" -> {
+                PacketDiagnostics.stop()
+                session.displayClientMessage("§e[Diag] medición detenida")
+            }
+
+            "report" -> {
+                if (!PacketDiagnostics.enabled) {
+                    session.displayClientMessage("§c[Diag] no está activo. Usa §f.diag on")
+                } else {
+                    PacketDiagnostics.report().forEach { session.displayClientMessage(it) }
+                }
+            }
+
+            else -> session.displayClientMessage("§7.diag on | report | off")
         }
     }
 

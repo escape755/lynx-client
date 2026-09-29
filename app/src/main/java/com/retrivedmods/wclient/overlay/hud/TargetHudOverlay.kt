@@ -57,6 +57,12 @@ class TargetHudOverlay : OverlayWindow() {
         private val overlayInstance by lazy { TargetHudOverlay() }
         private var isVisible = false
 
+        // Última skin de la que se extrajo la cara. showTargetHud se llama cada
+        // ~150 ms mientras haya objetivo y extractFaceFromSkin() decodifica la
+        // skin completa y crea 3 bitmaps: solo hace falta rehacerlo si cambia
+        // la skin (es decir, el objetivo).
+        private var cachedSkin: SerializedSkin? = null
+
         private var targetUsername by mutableStateOf("")
         private var targetImage by mutableStateOf<Bitmap?>(null)
         private var targetDistance by mutableStateOf(0f)
@@ -75,7 +81,10 @@ class TargetHudOverlay : OverlayWindow() {
             hurtTime: Float = 0f
         ) {
             targetUsername = username
-            targetImage = skin?.let { extractFaceFromSkin(it) }
+            if (skin !== cachedSkin) {
+                cachedSkin = skin
+                targetImage = skin?.let { extractFaceFromSkin(it) }
+            }
             targetDistance = distance.coerceIn(0f, maxDistance)
             targetMaxDistance = maxDistance
             targetHurtTime = hurtTime
@@ -167,6 +176,9 @@ class TargetHudOverlay : OverlayWindow() {
         }
 
         fun dismissTargetHud() {
+            // Idempotente: si no está visible no hay ventana que quitar, y
+            // removeView() sobre una vista no adjunta lanza una excepción.
+            if (!isVisible) return
             isVisible = false
             try {
                 OverlayManager.dismissOverlayWindow(overlayInstance)

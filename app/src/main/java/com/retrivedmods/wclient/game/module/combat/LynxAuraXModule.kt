@@ -41,7 +41,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
 
     private val targetModes = listOf(Mode("Single", 0), Mode("Multi", 1))
     private val rotationModes = listOf(
-        Mode("Unified", 13), Mode("None", 0), Mode("Smooth", 1), Mode("Nemesis", 2), Mode("Strafe", 3),
+        Mode("Predictive", ROT_PREDICTIVE), Mode("Unified", 13), Mode("None", 0), Mode("Smooth", 1), Mode("Nemesis", 2), Mode("Strafe", 3),
         Mode("Vortex", 4), Mode("FrontStrafe", 5), Mode("AirHvH Pro", 6), Mode("FrontsX", 7),
         Mode("Astral", 8), Mode("Atomic", 9), Mode("Syntax", 10), Mode("Cortex", 11), Mode("Alpha", 12)
     )
@@ -62,6 +62,19 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
     private var autoTrident by boolValue("Auto Trident", false)
     private var rainMode by boolValue("Rain Mode", false)
     private var vertOffset by floatValue("Vertical Offset", 0.3f, -1.0f..1.0f)
+
+    // Solo aplican con Rotation = Predictive (ver PredictiveAim.kt)
+    private var predTime by floatValue("Pred Time", 2.0f, 0.0f..8.0f)
+    private var predStrength by floatValue("Pred Strength", 1.0f, 0.0f..1.5f)
+    private var rotSmoothing by floatValue("Rot Smoothing", 0.35f, 0.05f..1.0f)
+    private var rotMaxSpeed by floatValue("Rot Max Speed", 30.0f, 5.0f..90.0f)
+    private var rotAccel by floatValue("Rot Accel", 12.0f, 2.0f..60.0f)
+    // Camera Sync: ademas de la rotacion enviada al servidor, gira la camara visible del cliente.
+    private var cameraSync by boolValue("Camera Sync", true)
+    // Los jugadores llegan por red con la Y a nivel de ojos (pies + 1.62); Player Y Offset se
+    // resta para obtener los pies. Si la camara mira demasiado alto/bajo, ajustalo
+    // (0 = las posiciones de jugadores ya son a nivel de pies).
+    private var playerYOffset by floatValue("Player Y Offset", 1.62f, 0.0f..1.7f)
     private var debug by boolValue("Debug", false)
 
     // int accessors over the named selectors
@@ -76,6 +89,9 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
     private var headYawOut = 0f
     private var raining = false
 
+    // Predictive rotation state
+    private val predRot = PredictiveRotator()
+
     private var lastDebugMsg: String? = null
     private fun dbg(msg: String) {
         if (!debug) return
@@ -88,6 +104,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
         super.onEnabled()
         targets.clear()
         tickCtr = 0
+        predRot.reset()
     }
 
     override fun onDisabled() {
@@ -95,6 +112,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
         targets.clear()
         tickCtr = 0
         LynxAuraXRots.resetState()
+        predRot.reset()
     }
 
     private fun targetDims(entity: Entity): Pair<Float, Float> {
@@ -120,7 +138,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
     }
 
     private fun attackTarget(target: Entity) {
-        if (hurttimeCheck && ((target.metadata[EntityDataTypes.HURT_TICKS] as? Int) ?: 0) > 8) return
+        if (hurttimeCheck && target.hurtTicks > 8) return
 
         val inventory = session.localPlayer.inventory
         repeat(multiplier) {
@@ -168,7 +186,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
             }
 
             is MovePlayerPacket -> {
-                if (isEnabled && targets.isNotEmpty() && rotationMode >= 1 && rotationMode != 3 &&
+                if (isEnabled && shouldOverrideRotation() &&
                     packet.runtimeEntityId == session.localPlayer.runtimeEntityId
                 ) {
                     packet.rotation = Vector3f.from(rotOut[0], rotOut[1], headYawOut)
@@ -179,10 +197,16 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
         }
     }
 
-    private fun spoofRotation(packet: PlayerAuthInputPacket) {
-        if (targets.isEmpty()) return
+    // Predictive sigue sobreescribiendo mientras vuelve suavemente a la camara real,
+    // aunque ya no queden objetivos; el resto de modos, como antes.
+    private fun shouldOverrideRotation(): Boolean {
         val m = rotationMode
-        if (m < 1 || m == 3) return
+        if (m == ROT_PREDICTIVE) return predRot.isOverriding
+        return targets.isNotEmpty() && m >= 1 && m != 3
+    }
+
+    private fun spoofRotation(packet: PlayerAuthInputPacket) {
+        if (!shouldOverrideRotation()) return
 
         packet.rotation = Vector3f.from(rotOut[0], rotOut[1], headYawOut)
     }
@@ -199,6 +223,16 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
 
         updateTargets(localPlayer)
         tickCtr++
+
+        // Predictive: la rotacion se actualiza en CADA tick (no solo en los ticks de ataque),
+        // asi que Interval, Hurttime o un objetivo que sale de rango un instante no la congelan.
+        if (rotationMode == ROT_PREDICTIVE) {
+            runCatching { updatePredictiveRotation(packet) }
+                .onFailure { dbg("Predictive error: ${it.javaClass.simpleName}: ${it.message}") }
+        } else if (predRot.isOverriding) {
+            predRot.reset()
+        }
+
         if (targets.isEmpty()) {
             dbg("sin objetivos en rango (${range})")
             return
@@ -244,7 +278,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
         while (fyaw < -180f) fyaw += 360f
 
         val m = rotationMode
-        if (m != 3 && m > 0 && m <= 13) {
+        if (m != 3 && m > 0 && m <= 13) { // Predictive (14) ya escribio rotOut arriba
             rotOut[0] = fpitch
             rotOut[1] = fyaw
             headYawOut = fyaw
@@ -258,16 +292,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
         ctx.rotYaw = rotOut[1]
         ctx.headYaw = headYawOut
 
-        val env = LynxAuraXRots.Env(
-            localPlayer.posX, localPlayer.posY, localPlayer.posZ,
-            localPlayer.motionX, localPlayer.motionY, localPlayer.motionZ,
-            packet.inputData.contains(PlayerAuthInputData.UP),
-            packet.inputData.contains(PlayerAuthInputData.LEFT),
-            packet.inputData.contains(PlayerAuthInputData.DOWN),
-            packet.inputData.contains(PlayerAuthInputData.RIGHT),
-            packet.inputData.contains(PlayerAuthInputData.JUMPING),
-            System.nanoTime() / 1e9f
-        )
+        val env = buildEnv(packet, localPlayer)
 
         fun targetSnapshot(e: Entity): LynxAuraXRots.Target {
             val (w, h) = targetDims(e)
@@ -278,7 +303,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
         }
 
         when (m) {
-            0 -> {}
+            0, ROT_PREDICTIVE -> {}
             3 -> {
                 val t = System.nanoTime() / 1e9f * 0.1f
                 rotOut[0] = fpitch + kotlin.math.sin(t) * 10f
@@ -308,7 +333,7 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
         rotOut[1] = ctx.rotYaw
         headYawOut = ctx.headYaw
 
-        dbg("atacando ${targets.size} objetivo(s), rot=${rotationModes[rotationMode].name}")
+        dbg("atacando ${targets.size} objetivo(s), rot=${(rotationItem as Mode).name}")
 
         if (targetMode == 0) {
             attackTarget(targets[0])
@@ -328,4 +353,39 @@ class LynxAuraXModule : Module("LynxAuraX", ModuleCategory.Combat) {
     }
 
     private fun asin(f: Float): Float = kotlin.math.asin(f.coerceIn(-1f, 1f))
+
+    private fun buildEnv(packet: PlayerAuthInputPacket, localPlayer: LocalPlayer) = LynxAuraXRots.Env(
+        localPlayer.posX, localPlayer.posY, localPlayer.posZ,
+        localPlayer.motionX, localPlayer.motionY, localPlayer.motionZ,
+        packet.inputData.contains(PlayerAuthInputData.UP),
+        packet.inputData.contains(PlayerAuthInputData.LEFT),
+        packet.inputData.contains(PlayerAuthInputData.DOWN),
+        packet.inputData.contains(PlayerAuthInputData.RIGHT),
+        packet.inputData.contains(PlayerAuthInputData.JUMPING),
+        System.nanoTime() / 1e9f
+    )
+
+    private fun updatePredictiveRotation(packet: PlayerAuthInputPacket) {
+        val settings = PredictiveRotator.Settings(
+            predTime = predTime,
+            predStrength = predStrength,
+            smoothing = rotSmoothing,
+            maxSpeed = rotMaxSpeed,
+            accel = rotAccel,
+            cameraSync = cameraSync,
+            playerYOffset = playerYOffset,
+            vertOffset = vertOffset
+        )
+        // targets ya viene ordenada por distancia; el controlador mantiene el objetivo bloqueado
+        // en targets[0], que es el mismo que ataca el modulo en modo Single.
+        if (predRot.update(session, packet, targets, settings)) {
+            rotOut[0] = predRot.pitch
+            rotOut[1] = predRot.yaw
+            headYawOut = predRot.yaw
+        }
+    }
+
+    private companion object {
+        const val ROT_PREDICTIVE = 14
+    }
 }

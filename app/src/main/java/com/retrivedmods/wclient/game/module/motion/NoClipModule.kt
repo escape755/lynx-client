@@ -9,6 +9,7 @@ import org.cloudburstmc.protocol.bedrock.data.PlayerPermission
 import org.cloudburstmc.protocol.bedrock.data.command.CommandPermission
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 import org.cloudburstmc.protocol.bedrock.packet.RequestAbilityPacket
+import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.UpdateAbilitiesPacket
 import org.cloudburstmc.math.vector.Vector3f
 import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData
@@ -70,16 +71,30 @@ class NoClipModule : Module("no_clip", ModuleCategory.Motion) {
     private var noClipEnabled = false
 
 
+    override fun onDisconnect(reason: String) {
+        noClipEnabled = false
+    }
+
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         val packet = interceptablePacket.packet
-        if (packet is RequestAbilityPacket && packet.ability == Ability.NO_CLIP) {
-            interceptablePacket.intercept()
+
+        if (packet is StartGamePacket) {
+            noClipEnabled = false
             return
         }
 
-        if (packet is UpdateAbilitiesPacket) {
-            interceptablePacket.intercept()
-            return
+        // Igual que en FlyModule: solo interceptar mientras el módulo está activo.
+        // Antes se descartaban siempre todos los UpdateAbilitiesPacket del servidor.
+        if (isEnabled) {
+            if (packet is RequestAbilityPacket && packet.ability == Ability.NO_CLIP) {
+                interceptablePacket.intercept()
+                return
+            }
+
+            if (packet is UpdateAbilitiesPacket) {
+                interceptablePacket.intercept()
+                return
+            }
         }
 
         if (packet is PlayerAuthInputPacket) {
@@ -106,7 +121,10 @@ class NoClipModule : Module("no_clip", ModuleCategory.Motion) {
 
                 if (verticalMotion != 0f) {
                     val motionPacket = SetEntityMotionPacket().apply {
-                        runtimeEntityId = session.localPlayer.uniqueEntityId
+                        // SetEntityMotionPacket direcciona por runtimeEntityId; con el
+                        // uniqueEntityId el movimiento vertical iba a una entidad
+                        // inexistente y nunca se aplicaba al jugador.
+                        runtimeEntityId = session.localPlayer.runtimeEntityId
                         motion = Vector3f.from(0f, verticalMotion, 0f)
                     }
                     session.clientBound(motionPacket)

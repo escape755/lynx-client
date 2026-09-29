@@ -195,8 +195,6 @@ class ArrayListOverlay : OverlayWindow() {
     override fun Content() {
         if (!isOverlayEnabled()) return
 
-        var rainbowOffset by remember { mutableStateOf(0f) }
-
         val infiniteTransition = rememberInfiniteTransition(label = "rainbow")
         val animatedOffset by infiniteTransition.animateFloat(
             initialValue = 0f,
@@ -210,10 +208,6 @@ class ArrayListOverlay : OverlayWindow() {
             ),
             label = "offset"
         )
-
-        LaunchedEffect(animatedOffset) {
-            rainbowOffset = animatedOffset
-        }
 
         val sortedModules = when (sortMode) {
             ArrayListModule.SortMode.LENGTH -> modules.sortedByDescending { it.name.length }
@@ -238,7 +232,7 @@ class ArrayListOverlay : OverlayWindow() {
                     ModuleItem(
                         module = module,
                         index = index,
-                        rainbowOffset = rainbowOffset,
+                        rainbowOffset = animatedOffset,
                         totalModules = sortedModules.size,
                         isLast = index == sortedModules.size - 1
                     )
