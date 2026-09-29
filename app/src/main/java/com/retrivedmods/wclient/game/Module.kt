@@ -32,18 +32,6 @@ abstract class Module(
     val isSessionCreated: Boolean
         get() = ::session.isInitialized
 
-    /**
-     * For "momentary action" modules (do something once, then turn back off
-     * on their own, e.g. FastCommand). Setting `isEnabled = false` from
-     * inside onEnabled() re-enters this same setter, which fires
-     * onDisabled() - a redundant "disabled" chat message/sound - in the
-     * middle of the module's own onEnabled() call. This resets the state
-     * directly instead, with no re-entrant callback.
-     */
-    protected fun disableSilently() {
-        _isEnabled = false
-    }
-
     var isExpanded by mutableStateOf(false)
     var isShortcutDisplayed by mutableStateOf(false)
 

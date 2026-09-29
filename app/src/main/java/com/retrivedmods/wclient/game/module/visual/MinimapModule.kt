@@ -67,9 +67,6 @@ class MinimapModule : Module("minimap", ModuleCategory.Visual) {
         MinimapOverlay.setShowCoordinates(showCoordinates)
     }
 
-    private var lastEntityUpdateTime = 0L
-    private val entityUpdateIntervalMs = 100L
-
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled || !isSessionCreated) return
 
@@ -82,20 +79,13 @@ class MinimapModule : Module("minimap", ModuleCategory.Visual) {
             val yawRadians = (packet.rotation.y * PI / 180).toFloat()
             MinimapOverlay.setPlayerRotation(yawRadians)
 
-            maybeUpdateEntityPositions()
+            updateEntityPositions()
             updateMinimapSettings()
         }
 
         if (packet is MoveEntityAbsolutePacket) {
-            maybeUpdateEntityPositions()
+            updateEntityPositions()
         }
-    }
-
-    private fun maybeUpdateEntityPositions() {
-        val now = System.currentTimeMillis()
-        if (now - lastEntityUpdateTime < entityUpdateIntervalMs) return
-        lastEntityUpdateTime = now
-        updateEntityPositions()
     }
 
     private fun updateEntityPositions() {
@@ -165,12 +155,14 @@ class MinimapModule : Module("minimap", ModuleCategory.Visual) {
     }
 
     private fun searchForValidEntities(): List<Entity> {
-        return session.level.entityMap.values
-            .asSequence()
-            .map { it to distance2D(it) }
-            .filter { (entity, distance) -> entity.isValidTarget() && distance <= rangeValue }
-            .sortedBy { it.second }
-            .map { it.first }
-            .toList()
+        val allEntities = session.level.entityMap.values
+        val validEntities = allEntities.filter { entity ->
+            val isValid = entity.isValidTarget()
+            val distance = distance2D(entity)
+            val inRange = distance <= rangeValue
+            isValid && inRange
+        }.sortedBy { distance2D(it) }
+
+        return validEntities
     }
 }

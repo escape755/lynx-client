@@ -59,9 +59,6 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
         }
     }
 
-    private var lastUpdateTime = 0L
-    private val updateIntervalMs = 150L
-
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled || !isSessionCreated) {
             scope.launch {
@@ -73,11 +70,8 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
             return
         }
 
-        val now = System.currentTimeMillis()
-        if (now - lastUpdateTime < updateIntervalMs) return
-        lastUpdateTime = now
-
-        val closestEntity = findClosestTarget()
+        val closestEntities = searchForClosestEntities()
+        val closestEntity = closestEntities.firstOrNull()
 
         if (closestEntity != null) {
             val username = getEntityName(closestEntity)
@@ -139,14 +133,16 @@ class TargetHudModule : Module("targethud", ModuleCategory.Visual) {
         return (playerData?.name?.toString() ?: "").isBlank()
     }
 
-    private fun findClosestTarget(): Entity? {
+    private fun searchForClosestEntities(): List<Entity> {
         return session.level.entityMap.values
-            .asSequence()
-            .filter { it.isTarget() }
-            .map { it to it.distance(session.localPlayer) }
-            .filter { (_, distance) -> distance < rangeValue }
-            .minByOrNull { it.second }
-            ?.first
+            .filter { entity ->
+                val distance = entity.distance(session.localPlayer)
+                val inRange = distance < rangeValue
+                val isTarget = entity.isTarget()
+                inRange && isTarget
+            }
+            .sortedBy { it.distance(session.localPlayer) }
+            .take(1)
     }
 
     private fun getEntityName(entity: Entity): String {

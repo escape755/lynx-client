@@ -4,7 +4,6 @@ import com.retrivedmods.wclient.game.InterceptablePacket
 import com.retrivedmods.wclient.game.Module
 import com.retrivedmods.wclient.game.ModuleCategory
 import com.retrivedmods.wclient.game.ActionBarManager
-import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
 
@@ -20,15 +19,8 @@ class NetworkInfoModule : Module("network_info", ModuleCategory.Visual) {
     private var lastPacketCountReset = 0L
     private val packetCountInterval = 1000L
 
-    // Real round-trip time via Bedrock's own NetworkStackLatencyPacket:
-    // the server sends one with fromServer=true and a timestamp, and the
-    // client echoes the exact same packet back with fromServer=false. We
-    // just watch that exchange go by - no extra packets of our own - and
-    // time it with our own clock on both ends, so server/client clock skew
-    // never enters into it.
-    private var pendingRequestTimestamp: Long? = null
-    private var pendingRequestSeenAt = 0L
-    private var currentPing = -1L
+    private var lastPingSentTime = 0L
+    private var currentPing = 0L
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
@@ -36,17 +28,11 @@ class NetworkInfoModule : Module("network_info", ModuleCategory.Visual) {
         val packet = interceptablePacket.packet
         incomingPackets++
 
-        if (packet is NetworkStackLatencyPacket) {
-            if (packet.isFromServer) {
-                pendingRequestTimestamp = packet.timestamp
-                pendingRequestSeenAt = System.currentTimeMillis()
-            } else if (packet.timestamp == pendingRequestTimestamp) {
-                currentPing = System.currentTimeMillis() - pendingRequestSeenAt
-                pendingRequestTimestamp = null
-            }
-        }
-
         if (packet is PlayerAuthInputPacket) {
+            if (lastPingSentTime > 0) {
+                currentPing = System.currentTimeMillis() - lastPingSentTime
+            }
+
             val currentTime = System.currentTimeMillis()
 
             if (currentTime - lastPacketCountReset >= packetCountInterval) {
@@ -58,12 +44,10 @@ class NetworkInfoModule : Module("network_info", ModuleCategory.Visual) {
             if (currentTime - lastDisplayTime >= displayInterval) {
                 lastDisplayTime = currentTime
 
-                val pingText = if (currentPing >= 0) "${currentPing}ms" else "..."
-
                 val networkText = if (colorStyle) {
                     buildString {
                         append("§l§c[Network] §r")
-                        append("§fPing: §a$pingText")
+                        append("§fPing: §a${currentPing}ms")
                         if (showPacketCounts) {
                             append(" §f| §fPackets: §a↑$outgoingPackets §c↓$incomingPackets")
                         }
@@ -71,7 +55,7 @@ class NetworkInfoModule : Module("network_info", ModuleCategory.Visual) {
                 } else {
                     buildString {
                         append("Network: ")
-                        append("Ping: $pingText")
+                        append("Ping: ${currentPing}ms")
                         if (showPacketCounts) {
                             append(" | Packets: ↑$outgoingPackets ↓$incomingPackets")
                         }
@@ -88,6 +72,7 @@ class NetworkInfoModule : Module("network_info", ModuleCategory.Visual) {
         if (!isEnabled) return
 
         outgoingPackets++
+        lastPingSentTime = System.currentTimeMillis()
     }
 
     override fun onDisabled() {

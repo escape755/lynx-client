@@ -13,20 +13,20 @@ import org.cloudburstmc.protocol.bedrock.packet.TextPacket
  */
 class FastCommandModule : Module("FastCommand", ModuleCategory.Misc) {
 
-    private var command by stringValue("Command", "/home 55", listOf())
+    private var command by stringValue("Command", "", listOf())
     private var showFeedback by boolValue("Show Feedback", true)
 
     override fun onEnabled() {
         super.onEnabled()
 
         if (!isSessionCreated) {
-            disableSilently()
+            isEnabled = false
             return
         }
 
         val typed = command.trim()
         if (typed.isEmpty()) {
-            disableSilently()
+            isEnabled = false
             return
         }
 
@@ -38,7 +38,7 @@ class FastCommandModule : Module("FastCommand", ModuleCategory.Misc) {
         }
 
         // se comporta como un botón, no como un toggle que se queda prendido
-        disableSilently()
+        isEnabled = false
     }
 
     private fun sendCommand(text: String) {

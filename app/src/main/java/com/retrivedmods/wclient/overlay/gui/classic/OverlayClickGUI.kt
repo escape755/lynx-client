@@ -14,7 +14,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -60,8 +58,8 @@ import com.retrivedmods.wclient.overlay.OverlayManager
 import com.retrivedmods.wclient.overlay.OverlayWindow
 
 private val DarkBackground = Color(0xFF0D0403)
-private val ContentBackground = Color(0xFF170805)
-private val SidebarBackground = Color(0xFF170805)
+private val SidebarBackground = Color(0xFF260C06)
+private val HeaderBackground = Color(0xFF33120A)
 private val AccentPrimary = Color(0xFFFF7A00)
 private val TextPrimary = Color(0xFFFFEEDD)
 private val TextSecondary = Color(0xFFC9A08C)
@@ -104,19 +102,23 @@ class OverlayClickGUI : OverlayWindow() {
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                 ) {
                     OverlayManager.dismissOverlayWindow(this)
-                }
-                // Cuando aparece el teclado, el panel se acomoda en el espacio que
-                // queda libre en vez de quedar tapado (el fondo oscuro sigue
-                // cubriendo toda la pantalla porque va antes en la cadena).
-                .imePadding(),
+                },
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
                     .width(600.dp)
                     .height(340.dp)
-                    .background(DarkBackground, RoundedCornerShape(6.dp))
-                    .border(1.dp, AccentPrimary.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color(0xFF0D0403),
+                                Color(0xFFB8390A),
+                                Color(0xFF2B0E08)
+                            )
+                        ),
+                        RoundedCornerShape(20.dp)
+                    )
                     .clickable(
                         indication = null,
                         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
@@ -144,12 +146,6 @@ class OverlayClickGUI : OverlayWindow() {
                         },
                         onClose = { OverlayManager.dismissOverlayWindow(this@OverlayClickGUI) }
                     )
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(AccentPrimary.copy(alpha = 0.35f))
-                    )
                     MainArea(snackbarHostState)
                 }
 
@@ -172,9 +168,9 @@ class OverlayClickGUI : OverlayWindow() {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(40.dp)
-                .background(DarkBackground)
-                .padding(horizontal = 14.dp),
+                .height(56.dp)
+                .background(HeaderBackground)
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -185,42 +181,32 @@ class OverlayClickGUI : OverlayWindow() {
                 Text(
                     "Lynx Client",
                     color = AccentPrimary,
-                    fontSize = 14.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-                IconButton(
-                    onClick = onDiscord,
-                    modifier = Modifier.size(32.dp)
-                ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(onClick = onDiscord) {
                     Icon(
                         painter = painterResource(R.drawable.ic_discord),
                         contentDescription = "Discord",
                         tint = TextSecondary,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-                IconButton(
-                    onClick = onWebsite,
-                    modifier = Modifier.size(32.dp)
-                ) {
+                IconButton(onClick = onWebsite) {
                     Icon(
                         painter = painterResource(R.drawable.ic_web),
                         contentDescription = "Website",
                         tint = TextSecondary,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier.size(32.dp)
-                ) {
+                IconButton(onClick = onClose) {
                     Icon(
                         Icons.Rounded.Close,
                         contentDescription = "Close",
-                        tint = TextSecondary,
-                        modifier = Modifier.size(16.dp)
+                        tint = TextSecondary
                     )
                 }
             }
@@ -233,21 +219,21 @@ class OverlayClickGUI : OverlayWindow() {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             CategorySidebar()
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(ContentBackground, RoundedCornerShape(4.dp))
-                    .border(1.dp, AccentPrimary.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                    .padding(14.dp)
+                    .background(DarkBackground, RoundedCornerShape(12.dp))
+                    .padding(20.dp)
             ) {
                 AnimatedContent(
                     targetState = selectedModuleCategory,
                     transitionSpec = {
-                        fadeIn(tween(120)) togetherWith fadeOut(tween(120))
+                        fadeIn(tween(200)) + slideInHorizontally { it / 3 } togetherWith
+                                fadeOut(tween(200)) + slideOutHorizontally { -it / 3 }
                     },
                     label = "CategoryContent"
                 ) { category ->
@@ -267,16 +253,16 @@ class OverlayClickGUI : OverlayWindow() {
 
         LazyColumn(
             modifier = Modifier
-                .width(120.dp)
+                .width(68.dp)
                 .fillMaxHeight()
-                .background(SidebarBackground, RoundedCornerShape(4.dp))
-                .border(1.dp, AccentPrimary.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                .padding(vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(1.dp)
+                .background(SidebarBackground, RoundedCornerShape(12.dp))
+                .padding(vertical = 12.dp, horizontal = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             items(categories.size) { index ->
                 val category = categories[index]
-                CategoryTab(
+                CategoryIcon(
                     category = category,
                     isSelected = selectedModuleCategory == category,
                     onClick = { selectedModuleCategory = category }
@@ -286,37 +272,42 @@ class OverlayClickGUI : OverlayWindow() {
     }
 
     @Composable
-    private fun CategoryTab(
+    private fun CategoryIcon(
         category: ModuleCategory,
         isSelected: Boolean,
         onClick: () -> Unit
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(30.dp)
-                .background(if (isSelected) ButtonBackground else Color.Transparent)
-                .clickable { onClick() }
-                .padding(horizontal = 10.dp)
+        val scale by animateFloatAsState(
+            targetValue = if (isSelected) 1.05f else 1f,
+            animationSpec = spring(dampingRatio = 0.7f),
+            label = "catScale"
+        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.clickable { onClick() }
         ) {
             Box(
                 modifier = Modifier
-                    .width(2.dp)
-                    .fillMaxHeight(0.6f)
-                    .background(if (isSelected) AccentPrimary else Color.Transparent)
-            )
-            Icon(
-                painter = painterResource(category.iconResId),
-                contentDescription = category.name,
-                tint = if (isSelected) AccentPrimary else TextSecondary,
-                modifier = Modifier.size(14.dp)
-            )
+                    .size(44.dp)
+                    .scale(scale)
+                    .background(
+                        if (isSelected) ButtonBackground else Color.Transparent,
+                        RoundedCornerShape(10.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(category.iconResId),
+                    contentDescription = category.name,
+                    tint = if (isSelected) AccentPrimary else Color(0xFFC98D6E),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             Text(
                 text = category.name,
-                color = if (isSelected) AccentPrimary else TextSecondary,
-                fontSize = 11.sp,
+                color = if (isSelected) AccentPrimary else Color(0xFFC98D6E),
+                fontSize = 9.sp,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

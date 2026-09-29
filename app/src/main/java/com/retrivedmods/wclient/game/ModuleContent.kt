@@ -6,19 +6,13 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -35,37 +29,23 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastForEach
 import com.retrivedmods.wclient.R
 import com.retrivedmods.wclient.overlay.OverlayManager
 import com.retrivedmods.wclient.util.translatedSelf
 import kotlin.math.roundToInt
-import kotlinx.coroutines.flow.first
 
 
 private val DarkBackground = Color(0xFFFFFFFF)
@@ -227,93 +207,86 @@ private fun ChoiceValueContent(value: ListValue) {
 
 @Composable
 private fun FloatValueContent(value: FloatValue) {
-    Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp)) {
-        val range = value.range
-        val fraction = ((value.value - range.start) / (range.endInclusive - range.start))
-            .let { if (it.isNaN()) 0f else it.coerceIn(0f, 1f) }
+    Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) {
+        Row(modifier = Modifier.padding(bottom = 4.dp)) {
+            Text(
+                value.name.translatedSelf,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                String.format("%.2f", value.value),
+                style = MaterialTheme.typography.bodyMedium,
+                color = AccentPrimary
+            )
+        }
 
-        ImGuiSlider(
-            fraction = fraction,
-            displayText = "${value.name.translatedSelf}: ${String.format("%.2f", value.value)}",
-            onFractionChange = { frac ->
-                val raw = range.start + frac * (range.endInclusive - range.start)
-                val rounded = ((raw * 100.0).roundToInt() / 100.0).toFloat().coerceIn(range.start, range.endInclusive)
+        val colors = SliderDefaults.colors(
+            thumbColor = AccentPrimary,
+            activeTrackColor = AccentPrimary,
+            activeTickColor = AccentPrimary,
+            inactiveTickColor = Color(0xFF8C3010),
+            inactiveTrackColor = Color(0xFF8C3010),
+            disabledThumbColor = Color(0xFF8C4020),
+            disabledActiveTrackColor = Color(0xFF8C3010),
+            disabledActiveTickColor = Color(0xFF8C3010),
+            disabledInactiveTrackColor = Color(0xFF33120A),
+            disabledInactiveTickColor = Color(0xFF33120A)
+        )
+
+        Slider(
+            value = value.value,
+            onValueChange = {
+                val rounded = ((it * 100.0).roundToInt() / 100.0).toFloat()
                 if (value.value != rounded) value.value = rounded
-            }
-        )
-    }
-}
-
-/**
- * ImGui-style slider: the fill bar itself is the control, with the name and
- * current value overlaid centered on top of it, instead of a separate label
- * row plus a Material thumb-and-track Slider. Tapping or dragging anywhere on
- * the bar jumps/tracks the value directly - no animateFloatAsState wrapping
- * the position, since that's what made the old sliders lag behind the finger.
- */
-@Composable
-private fun ImGuiSlider(
-    fraction: Float,
-    displayText: String,
-    onFractionChange: (Float) -> Unit
-) {
-    var trackWidthPx by remember { mutableStateOf(1f) }
-
-    fun updateFromX(x: Float) {
-        onFractionChange((x / trackWidthPx).coerceIn(0f, 1f))
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(26.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xFF1A0805))
-            .border(1.dp, BorderColor, RoundedCornerShape(4.dp))
-            .onGloballyPositioned { trackWidthPx = it.size.width.toFloat().coerceAtLeast(1f) }
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragStart = { offset -> updateFromX(offset.x) }
-                ) { change, _ ->
-                    updateFromX(change.position.x)
-                }
-            }
-    ) {
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(fraction)
-                .background(AccentPrimary, RoundedCornerShape(4.dp))
-        )
-        Text(
-            text = displayText,
-            color = TextPrimary,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(horizontal = 6.dp)
+            },
+            valueRange = value.range,
+            colors = colors,
+            enabled = true
         )
     }
 }
 
 @Composable
 private fun IntValueContent(value: IntValue) {
-    Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp)) {
-        val start = value.range.first.toFloat()
-        val end = value.range.last.toFloat()
-        val fraction = ((value.value - start) / (end - start))
-            .let { if (it.isNaN()) 0f else it.coerceIn(0f, 1f) }
+    Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) {
+        Row(modifier = Modifier.padding(bottom = 4.dp)) {
+            Text(
+                value.name.translatedSelf,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                value.value.toString(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = AccentPrimary
+            )
+        }
 
-        ImGuiSlider(
-            fraction = fraction,
-            displayText = "${value.name.translatedSelf}: ${value.value}",
-            onFractionChange = { frac ->
-                val next = (start + frac * (end - start)).roundToInt().coerceIn(value.range.first, value.range.last)
+        val colors = SliderDefaults.colors(
+            thumbColor = AccentPrimary,
+            activeTrackColor = AccentPrimary,
+            activeTickColor = AccentPrimary,
+            inactiveTickColor = Color(0xFF8C3010),
+            inactiveTrackColor = Color(0xFF8C3010),
+            disabledThumbColor = Color(0xFF8C4020),
+            disabledActiveTrackColor = Color(0xFF8C3010),
+            disabledActiveTickColor = Color(0xFF8C3010),
+            disabledInactiveTrackColor = Color(0xFF33120A),
+            disabledInactiveTickColor = Color(0xFF33120A)
+        )
+
+        Slider(
+            value = value.value.toFloat(),
+            onValueChange = {
+                val next = it.roundToInt()
                 if (value.value != next) value.value = next
-            }
+            },
+            valueRange = value.range.toFloatRange(),
+            colors = colors,
+            enabled = true
         )
     }
 }
@@ -436,36 +409,8 @@ private fun <T : Enum<T>> EnumValueContent(value: EnumValue<T>) {
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun StringValueContent(value: StringValue) {
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val windowInfo = LocalWindowInfo.current
-    val hasFocus = remember { mutableStateOf(false) }
-
-    // Compose pide el teclado en el mismo instante en que el campo recibe foco,
-    // pero en ese momento la ventana overlay todavía es NOT_FOCUSABLE (recién se
-    // está cambiando) y Android descarta el pedido. Cuando la ventana ya ganó
-    // foco de verdad, se vuelve a pedir.
-    LaunchedEffect(hasFocus.value) {
-        if (hasFocus.value) {
-            snapshotFlow { windowInfo.isWindowFocused }.first { it }
-            keyboardController?.show()
-        }
-    }
-
-    // Si el campo enfocado sale de la composición (cambio de categoría, scroll,
-    // cierre del menú) puede que nunca llegue onFocusChanged(false): se suelta
-    // el foco de la ventana a mano, pero solo si este campo era el enfocado.
-    DisposableEffect(Unit) {
-        onDispose {
-            if (hasFocus.value) {
-                com.retrivedmods.wclient.overlay.OverlayManager.setClickGuiFocusable(false)
-            }
-        }
-    }
-
     Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)) {
         Text(
             value.name.translatedSelf,
@@ -480,18 +425,8 @@ private fun StringValueContent(value: StringValue) {
             modifier = Modifier
                 .fillMaxWidth()
                 .onFocusChanged { state ->
-                    hasFocus.value = state.isFocused
                     com.retrivedmods.wclient.overlay.OverlayManager.setClickGuiFocusable(state.isFocused)
                 },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(
-                onDone = {
-                    keyboardController?.hide()
-                    // Soltar el foco devuelve la ventana a NOT_FOCUSABLE y el
-                    // control al juego en cuanto se termina de escribir.
-                    focusManager.clearFocus()
-                }
-            ),
             enabled = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = AccentPrimary,

@@ -43,7 +43,7 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
     private var descentSpeed by floatValue("Descent Speed", 4.2997f, 0.1f..5.0f)
     private var descentH by floatValue("Descent Horizontal", 1.1f, 0.1f..3.0f)
     private var descensoAlternado by boolValue("Descenso Alternado", true)
-    private var holdOffMs by floatValue("Hold-off (ms)", 650f, 100f..1200f)
+    private var holdOffMs by floatValue("Hold-off (ms)", 450f, 100f..1000f)
     private var chunkRadius by intValue("Chunk Radius", 2, 1..4)
 
     private var bypassPhase = false
@@ -102,17 +102,6 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
 
     private fun tick(packet: PlayerAuthInputPacket, now: Long) {
         val holdingOff = now < holdOffUntilNs
-        if (holdingOff) {
-            // no mandamos NADA de movimiento inventado durante esta ventana -
-            // que el servidor procese el golpe/knockback sin que nosotros
-            // sigamos empujando encima. bypassPhase tambien se resetea para
-            // no arrancar una fase nueva a mitad del hold-off.
-            bypassPhase = false
-            smoothedSpeed = null
-            smoothedVy = null
-            return
-        }
-
         val input = packet.inputData
         val pos = packet.position
 
@@ -132,17 +121,22 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
         val moving = w || a || s || d
 
         var bypassActive = false
-        if (space && moving) {
-            bypassPhase = true
-            phaseStartNs = now
-            bypassActive = true
-        } else if (bypassPhase) {
-            bypassActive = true
-            val secs = (now - phaseStartNs) / 1e9f
-            if (secs >= releaseDelay) {
-                bypassPhase = false
-                bypassActive = false
+        if (!holdingOff) {
+            if (space && moving) {
+                bypassPhase = true
+                phaseStartNs = now
+                bypassActive = true
+            } else if (bypassPhase) {
+                bypassActive = true
+                val secs = (now - phaseStartNs) / 1e9f
+                if (secs >= releaseDelay) {
+                    bypassPhase = false
+                    bypassActive = false
+                }
             }
+        } else {
+            // durante el hold-off no arrancamos ni sostenemos una fase nueva
+            bypassPhase = false
         }
 
         val vy: Float = if (shift) {
@@ -150,7 +144,10 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
         } else {
             glide + (if (space) (if (bypassActive) bypV else normV) else 0f)
         }
-        val smoothVy = (smoothedVy ?: vy).let { it + (vy - it) * 0.6f }
+        // convergencia mas rapida durante el hold-off, para soltar cualquier
+        // resto de velocidad "bypass" antes de que el servidor corrija
+        val vyRate = if (holdingOff) 0.9f else 0.6f
+        val smoothVy = (smoothedVy ?: vy).let { it + (vy - it) * vyRate }
         smoothedVy = smoothVy
 
         if (!moving) {
@@ -177,7 +174,8 @@ class BypassFlyModule : Module("BypassFly", ModuleCategory.Motion) {
             bypassActive -> bypH
             else -> normH
         }
-        val smoothSpeed = (smoothedSpeed ?: speed).let { it + (speed - it) * 0.6f }
+        val speedRate = if (holdingOff) 0.9f else 0.6f
+        val smoothSpeed = (smoothedSpeed ?: speed).let { it + (speed - it) * speedRate }
         smoothedSpeed = smoothSpeed
 
         if (shift && descensoAlternado) {

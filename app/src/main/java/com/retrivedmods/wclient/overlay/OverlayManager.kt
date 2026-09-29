@@ -14,7 +14,6 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.retrivedmods.wclient.game.ModuleManager
 import com.retrivedmods.wclient.ui.theme.WClientTheme
 import com.retrivedmods.wclient.overlay.gui.classic.OverlayButton
-import com.retrivedmods.wclient.overlay.gui.classic.OverlayClickGUI
 import com.retrivedmods.wclient.overlay.gui.classic.OverlayShortcutButton
 
 import kotlinx.coroutines.launch
@@ -79,14 +78,6 @@ object OverlayManager {
     fun showOverlayWindow(overlayWindow: OverlayWindow) {
         overlayWindows.add(overlayWindow)
 
-        // El ClickGUI se crea dentro de OverlayButton y se muestra desde acá, así
-        // que este es el único punto donde se lo puede registrar. Antes esta
-        // variable solo se ponía en null y nunca se asignaba, por lo que
-        // setClickGuiFocusable() no hacía nada y el teclado jamás aparecía.
-        if (overlayWindow is OverlayClickGUI) {
-            currentClickGUI = overlayWindow
-        }
-
         val context = currentContext
         if (isShowing && context != null) {
             showOverlayWindow(context, overlayWindow)
@@ -95,13 +86,6 @@ object OverlayManager {
 
     fun dismissOverlayWindow(overlayWindow: OverlayWindow) {
         overlayWindows.remove(overlayWindow)
-
-        // Si se cierra con un campo de texto enfocado, los parámetros quedarían
-        // "focusables" y la próxima apertura robaría el foco al juego.
-        if (overlayWindow === currentClickGUI) {
-            overlayWindow.resetFocusParams()
-            currentClickGUI = null
-        }
 
         val context = currentContext
         if (isShowing && context != null) {

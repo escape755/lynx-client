@@ -13,12 +13,10 @@ import com.retrivedmods.wclient.game.module.combat.LynxAuraModule        // NUEV
 import com.retrivedmods.wclient.game.module.combat.LynxAuraXModule       // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.combat.LynxAuraProModule     // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.misc.ArrayListModule
-import com.retrivedmods.wclient.game.module.misc.AutoRespawnModule
 import com.retrivedmods.wclient.game.module.motion.NoClipModule
 import com.retrivedmods.wclient.game.module.motion.BypassFlyModule       // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.misc.AutoDisconnectModule
 import com.retrivedmods.wclient.game.module.misc.CommandHandlerModule
-import com.retrivedmods.wclient.game.module.visual.AntiLagModule
 import com.retrivedmods.wclient.game.module.visual.CoordinatesModule
 import com.retrivedmods.wclient.game.module.misc.DesyncModule
 import com.retrivedmods.wclient.game.module.misc.FakeDeathModule
@@ -125,7 +123,6 @@ object ModuleManager {
             add(CrosshairModule())
             add(TargetHudModule())
             add(FullbrightModule())
-            add(AntiLagModule())
 
             // World
             add(FreeCameraModule())
@@ -138,7 +135,6 @@ object ModuleManager {
             // Misc
 
             add(AutoDisconnectModule())
-            add(AutoRespawnModule())
             add(ArrayListModule())
             add(ToggleSoundModule())
             add(ChestStealerModule())

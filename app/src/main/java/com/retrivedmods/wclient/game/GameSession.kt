@@ -90,12 +90,8 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
             }
         }
 
-        try {
-            localPlayer.onPacketBound(packet)
-            level.onPacketBound(packet)
-        } catch (e: Exception) {
-            Log.e("GameSession", "localPlayer/level failed to handle ${packet::class.simpleName}", e)
-        }
+        localPlayer.onPacketBound(packet)
+        level.onPacketBound(packet)
 
         val interceptablePacket = InterceptablePacket(packet)
 
@@ -104,12 +100,7 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
             if (!module.isSessionCreated) {
                 module.session = this
             }
-            try {
-                module.beforePacketBound(interceptablePacket)
-            } catch (e: Exception) {
-                Log.e("GameSession", "Module ${module.name} failed to handle ${packet::class.simpleName}", e)
-                displayClientMessage("[Lynx Client] ${module.name} crashed on ${packet::class.simpleName}: ${e.message}")
-            }
+            module.beforePacketBound(interceptablePacket)
             if (interceptablePacket.isIntercepted) {
                 return true
             }
@@ -120,11 +111,7 @@ class GameSession(val wRelaySession: WRelaySession) : ComposedPacketHandler {
 
     override fun afterPacketBound(packet: BedrockPacket) {
         for (module in ModuleManager.modules) {
-            try {
-                module.afterPacketBound(packet)
-            } catch (e: Exception) {
-                Log.e("GameSession", "Module ${module.name} failed in afterPacketBound for ${packet::class.simpleName}", e)
-            }
+            module.afterPacketBound(packet)
         }
     }
 

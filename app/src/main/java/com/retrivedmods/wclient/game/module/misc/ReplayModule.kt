@@ -97,7 +97,7 @@ class ReplayModule : Module("replay_mod", ModuleCategory.Misc) {
 
     override fun onEnabled() {
         if (!isSessionCreated) {
-            disableSilently()
+            isEnabled = false
             return
         }
 
