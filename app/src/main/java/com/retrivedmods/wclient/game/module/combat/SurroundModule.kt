@@ -29,7 +29,7 @@ import kotlin.math.floor
 class SurroundModule : Module("Surround", ModuleCategory.Combat) {
 
     private var blockIdentifier by stringValue("Block", "minecraft:obsidian", null)
-    private var interval by intValue("Interval", 4, 1..20)
+    private var interval by intValue("Interval", 1, 1..20)
 
     private val offsets = arrayOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)
 

@@ -25,7 +25,7 @@ import org.cloudburstmc.protocol.bedrock.packet.PlayerHotbarPacket
 class AutoEatModule : Module("Auto Eat", ModuleCategory.Combat) {
 
     private var hungerThreshold by intValue("Hunger Threshold", 14, 0..20)
-    private var delay by intValue("Delay", 200, 0..2000)
+    private var delay by intValue("Delay", 0, 0..2000)
 
     private var lastAttempt = 0L
 

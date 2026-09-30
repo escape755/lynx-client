@@ -6,7 +6,7 @@ import android.os.Environment
 import com.retrivedmods.wclient.application.AppContext
 import com.retrivedmods.wclient.game.module.combat.AntiCrystalModule
 import com.retrivedmods.wclient.game.module.combat.AntiKnockbackModule
-import com.retrivedmods.wclient.game.module.combat.CrystalSmashModule
+import com.retrivedmods.wclient.game.module.combat.CrystalAuraModule
 import com.retrivedmods.wclient.game.module.combat.HitboxModule
 import com.retrivedmods.wclient.game.module.combat.AutoTotemModule
 import com.retrivedmods.wclient.game.module.combat.LynxAuraModule        // NUEVO (port de Gato Client)
@@ -56,6 +56,7 @@ import com.retrivedmods.wclient.game.module.motion.PlayerTPModule
 import com.retrivedmods.wclient.game.module.motion.SpeedModule
 import com.retrivedmods.wclient.game.module.motion.SpiderModule
 import com.retrivedmods.wclient.game.module.motion.SprintModule
+import com.retrivedmods.wclient.game.module.motion.TestFlyModule       // NUEVO — idea de Test-Fly (Veyra)
 import com.retrivedmods.wclient.game.module.visual.CrosshairModule
 import com.retrivedmods.wclient.game.module.visual.DamageTextModule
 import com.retrivedmods.wclient.game.module.visual.ESPModule
@@ -95,7 +96,7 @@ object ModuleManager {
 
             add(AntiCrystalModule())
             add(HitboxModule())
-            add(CrystalSmashModule())
+            add(CrystalAuraModule())       // RENOMBRADO de CrystalSmash — idea de AutoCrystal (Veyra)
             add(LynxAuraModule())          // NUEVO — port de GatoAura (Gato Client)
             add(LynxAuraXModule())         // NUEVO — port de GatoAuraX (Gato Client)
             add(LynxAuraProModule())       // NUEVO — port de +999aura (Gato Client)
@@ -110,6 +111,7 @@ object ModuleManager {
             add(PlayerTPModule())
             add(FlyModule())
             add(BypassFlyModule())         // NUEVO — port de BypassFly (Gato Client)
+            add(TestFlyModule())           // NUEVO — idea de Test-Fly (Veyra)
             add(SpeedModule())
             add(AirJumpModule())
             add(NoClipModule())
