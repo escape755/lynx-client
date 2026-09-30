@@ -12,6 +12,11 @@ import com.retrivedmods.wclient.game.module.combat.AutoTotemModule
 import com.retrivedmods.wclient.game.module.combat.LynxAuraModule        // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.combat.LynxAuraXModule       // NUEVO (port de Gato Client)
 import com.retrivedmods.wclient.game.module.combat.LynxAuraProModule     // NUEVO (port de Gato Client)
+import com.retrivedmods.wclient.game.module.combat.AutoEatModule         // NUEVO
+import com.retrivedmods.wclient.game.module.combat.AnchorAuraModule      // NUEVO
+import com.retrivedmods.wclient.game.module.combat.AnchorHelperModule    // NUEVO
+import com.retrivedmods.wclient.game.module.combat.BedAuraModule         // NUEVO
+import com.retrivedmods.wclient.game.module.combat.SurroundModule        // NUEVO
 import com.retrivedmods.wclient.game.module.misc.ArrayListModule
 import com.retrivedmods.wclient.game.module.misc.AutoRespawnModule
 import com.retrivedmods.wclient.game.module.motion.NoClipModule
@@ -94,6 +99,11 @@ object ModuleManager {
             add(LynxAuraModule())          // NUEVO — port de GatoAura (Gato Client)
             add(LynxAuraXModule())         // NUEVO — port de GatoAuraX (Gato Client)
             add(LynxAuraProModule())       // NUEVO — port de +999aura (Gato Client)
+            add(AutoEatModule())           // NUEVO
+            add(AnchorAuraModule())        // NUEVO
+            add(AnchorHelperModule())      // NUEVO
+            add(BedAuraModule())           // NUEVO
+            add(SurroundModule())          // NUEVO
 
             // Motion
             add(MotionFlyModule())
