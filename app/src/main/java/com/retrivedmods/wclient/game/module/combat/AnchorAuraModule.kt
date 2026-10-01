@@ -44,7 +44,12 @@ class AnchorAuraModule : Module("Anchor Aura", ModuleCategory.Combat) {
 
     override fun onDisabled() {
         super.onDisabled()
-        placer.reset()
+        // placer es "by lazy": si el modulo se apaga ANTES de haberse
+        // conectado a un server (session sin inicializar todavia), tocar
+        // placer aqui lo crearia por primera vez y necesita session -> 
+        // UninitializedPropertyAccessException. El Switch del ClickGUI llama
+        // a esto directo, sin el try/catch que ya protege beforePacketBound.
+        if (isSessionCreated) placer.reset()
     }
 
     override fun onDisconnect(reason: String) {
