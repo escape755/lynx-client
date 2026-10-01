@@ -17,23 +17,43 @@ import org.cloudburstmc.protocol.bedrock.packet.PlayerHotbarPacket
  * servidor despues de que los modulos lo procesen (ver GameSession). En vez
  * de construir un paquete propio, este modulo selecciona el slot de comida
  * (PlayerHotbarPacket, igual que si el jugador hubiera pulsado una tecla) y
- * le añade la flag START_USING_ITEM al paquete de ESTE tick antes de que
- * continue - exactamente el mismo mecanismo que ya usa PlayerInventory.kt
- * para PERFORM_ITEM_STACK_REQUEST (mutar inputData de un paquete real de
- * paso, no inventar un paquete sintetico).
+ * le añade la flag START_USING_ITEM al paquete, igual que ya hace
+ * PlayerInventory.kt con PERFORM_ITEM_STACK_REQUEST (mutar inputData de un
+ * paquete real de paso, no inventar uno sintetico).
+ *
+ * v2: la version anterior añadia la flag en CADA tick mientras el hambre
+ * seguia baja. Sospecha (no confirmada por log, pero es el cambio mas
+ * razonable dado el sintoma "no come nada"): si el servidor interpreta
+ * cada aparicion de START_USING_ITEM como un "empezar a usar" nuevo en vez
+ * de "seguir sosteniendo", el temporizador de comer se reinicia cada tick y
+ * nunca llega a completarse. Ahora se sostiene la flag por la duracion real
+ * de comer en Bedrock (32 ticks, 1.6s) y despues se suelta, igual que
+ * haria un jugador real soltando el click tras la animacion.
  */
 class AutoEatModule : Module("Auto Eat", ModuleCategory.Combat) {
 
     private var hungerThreshold by intValue("Hunger Threshold", 14, 0..20)
-    private var delay by intValue("Delay", 0, 0..2000)
+    private var delay by intValue("Delay", 200, 0..2000)
 
-    private var lastAttempt = 0L
+    private var eatingSinceTick: Long? = null
+    private var lastFinishedAt = 0L
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
 
         val packet = interceptablePacket.packet
         if (packet !is PlayerAuthInputPacket) return
+
+        val holdStart = eatingSinceTick
+        if (holdStart != null) {
+            if (packet.tick - holdStart < EAT_DURATION_TICKS) {
+                packet.inputData.add(PlayerAuthInputData.START_USING_ITEM)
+            } else {
+                eatingSinceTick = null
+                lastFinishedAt = System.currentTimeMillis()
+            }
+            return
+        }
 
         // El jugador (u otro modulo) ya esta usando un item este tick - no
         // pisarlo con nuestra propia flag, misma logica de no-conflicto que
@@ -44,8 +64,7 @@ class AutoEatModule : Module("Auto Eat", ModuleCategory.Combat) {
         val hunger = player.attributes[Attribute.HUNGER]?.value ?: 20f
         if (hunger > hungerThreshold) return
 
-        val now = System.currentTimeMillis()
-        if (now - lastAttempt < delay) return
+        if (System.currentTimeMillis() - lastFinishedAt < delay) return
 
         val inv = player.inventory
         val foodSlot = inv.searchForItemInHotbar { isFood(it) } ?: return
@@ -59,7 +78,12 @@ class AutoEatModule : Module("Auto Eat", ModuleCategory.Combat) {
         }
 
         packet.inputData.add(PlayerAuthInputData.START_USING_ITEM)
-        lastAttempt = now
+        eatingSinceTick = packet.tick
+    }
+
+    override fun onDisabled() {
+        super.onDisabled()
+        eatingSinceTick = null
     }
 
     private fun isFood(item: ItemData): Boolean {
@@ -69,6 +93,9 @@ class AutoEatModule : Module("Auto Eat", ModuleCategory.Combat) {
     }
 
     private companion object {
+        // Duracion real de la animacion/temporizador de comer en Bedrock.
+        const val EAT_DURATION_TICKS = 32L
+
         // Identificadores de comida mas comunes en supervivencia/PVP Bedrock.
         // Mismo tipo de lista fija que ya usaba ChestStealerModule.SKYWARS_FOOD
         // para esta version del protocolo - no hay flag "isFood" en ItemData.

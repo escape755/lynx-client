@@ -12,25 +12,31 @@ import kotlin.math.sin
 
 /**
  * Estilo de vuelo "Superman": glide vertical constante + empuje horizontal
- * en la direccion que estes mirando/moviendo. Idea tomada del modulo
- * Test-Fly de Veyra (Movement) - mismo concepto (glide + empuje direccional
- * simple, sin fases ni rampas), reescrito desde cero sobre el mecanismo de
- * input que ya usa BypassFlyModule en este proyecto (PlayerAuthInputData /
- * SetEntityMotionPacket), ya que Veyra lee teclado directo (es un cliente
- * nativo por hooking) y aqui no hay tal cosa - se lee la intencion de
- * movimiento ya resuelta en el paquete, igual que el resto de modulos de
- * este cliente.
+ * en la direccion que estes mirando/moviendo, con la velocidad horizontal
+ * reducida mientras subes o bajas activamente (Up/Down H Factor) - mismos
+ * seis parametros (H/Up/Down Speed BPS, Glide, Up/Down H Factor) que un
+ * Testfly de referencia que me pasaron por capturas de su GUI (no tenia el
+ * codigo, solo los nombres/valores de los sliders - la mecanica de abajo es
+ * mi propia interpretacion razonable de esos nombres, no una copia de logica
+ * que nunca vi).
  *
- * A proposito NO se porta: el "Bypass"/spam de W de Veyra (alternar el flag
- * de avanzar en un intervalo aleatorio para que el input parezca humano) -
- * eso es una tecnica de evasion de deteccion, justo lo que se pidio evitar
- * en este proyecto. Este modulo es solo el movimiento en si.
+ * "BPS" = bloques por segundo; Bedrock corre a 20 ticks/s, así que se
+ * divide entre 20 para sacar el valor por tick que de verdad usa
+ * SetEntityMotionPacket (igual que el resto de modulos de vuelo del
+ * proyecto, todos en blocks/tick).
+ *
+ * A proposito NO se porta ningun spam de tecla ni ajuste de posicion para
+ * camuflar el input como humano - eso es evasion de deteccion, fuera del
+ * alcance pedido para este proyecto.
  */
 class TestFlyModule : Module("Test-Fly", ModuleCategory.Motion) {
 
-    private var hSpeed by floatValue("H-Speed", 1.1f, 0.2f..3f)
-    private var vSpeed by floatValue("V-Speed", 1f, 0.2f..3f)
-    private var glide by floatValue("Glide", -0.14f, -0.3f..0f)
+    private var hSpeedBps by floatValue("H Speed BPS", 20f, 2f..60f)
+    private var upSpeedBps by floatValue("Up Speed BPS", 14f, 2f..60f)
+    private var downSpeedBps by floatValue("Down Speed BPS", 20f, 2f..60f)
+    private var glide by floatValue("Glide", -0.08f, -0.3f..0f)
+    private var upHFactor by floatValue("Up H Factor", 0.55f, 0f..1f)
+    private var downHFactor by floatValue("Down H Factor", 0.44f, 0f..1f)
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
         if (!isEnabled) return
@@ -46,9 +52,22 @@ class TestFlyModule : Module("Test-Fly", ModuleCategory.Motion) {
         val down = input.contains(PlayerAuthInputData.SNEAKING)
         val moving = w || a || s || d
 
-        var vy = glide
-        if (up) vy += vSpeed
-        if (down) vy -= vSpeed
+        // vertical: ascender/descender manda, si no hay ninguno de los dos
+        // se queda en el glide constante. hFactor acompaña a cual de los
+        // dos este activo (1.0 = velocidad horizontal completa cuando solo
+        // estas gliding a nivel).
+        val vy: Float
+        val hFactor: Float
+        if (up) {
+            vy = upSpeedBps / 20f
+            hFactor = upHFactor
+        } else if (down) {
+            vy = -(downSpeedBps / 20f)
+            hFactor = downHFactor
+        } else {
+            vy = glide
+            hFactor = 1f
+        }
 
         if (!moving) {
             sendMotion(0f, vy, 0f)
@@ -67,6 +86,7 @@ class TestFlyModule : Module("Test-Fly", ModuleCategory.Motion) {
             if (a) -90f else if (d) 90f else 0f
         }
         val rad = Math.toRadians((yaw + off + 90f).toDouble())
+        val hSpeed = (hSpeedBps / 20f) * hFactor
 
         sendMotion(cos(rad).toFloat() * hSpeed, vy, sin(rad).toFloat() * hSpeed)
     }
