@@ -88,6 +88,19 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
     private var weaponItem by listValue("Weapon", weaponModes[0], weaponModes.toSet())
     private var includeMobs by boolValue("Mobs", false)
     private var hurtTimeCheck by boolValue("Hurt Check", true)
+    // playerMap (Level.kt) trae la lista real de jugadores del server; un
+    // runtimeEntityId sin entrada ahi (o con nombre vacio) es casi siempre
+    // un bot/NPC que algunos servers generan - idea de MuCuteClient.
+    private var ignoreBots by boolValue("Ignore Bots", true)
+
+    // TP Aura: se teletransporta hacia el objetivo manteniendo una distancia,
+    // en vez de solo rotar/golpear a rango. Idea de MuCuteClient/Lumina -
+    // mecanica de MOVIMIENTO, no de rotacion, asi que no choca con "solo mis
+    // rotaciones de Lynx".
+    private var tpAura by boolValue("TP Aura", false)
+    private var tpKeepDistance by floatValue("TP Keep Distance", 2f, 1f..5f)
+    private var tpCooldownMs by intValue("TP Cooldown", 1000, 100..3000)
+    private var lastTpAt = 0L
     private var eatStop by boolValue("EatStop", false)
     private var debug by boolValue("Debug", false)
 
@@ -283,6 +296,7 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
             if (!isPlayer && !isMob) continue
             if (!isPlayer && !includeMobs) continue
             if (hurtTimeCheck && entity.hurtTicks > 0) continue
+            if (ignoreBots && isPlayer && isBot(entity as Player)) continue
             targetList.add(entity)
         }
 
@@ -332,6 +346,8 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
 
         shouldRot = true
 
+        if (tpAura) teleportToward(first)
+
         val weaponSlot = if (autoWeaponMode != 0 || java) getBestWeaponSlot(first)
         else localPlayer.inventory.heldItemSlot
 
@@ -380,6 +396,39 @@ class LynxAuraModule : Module("LynxAura", ModuleCategory.Combat) {
                 critPend = shouldCriticals && attackedAny
             }
         }
+    }
+
+    private fun isBot(player: Player): Boolean {
+        val entry = session.level.playerMap[player.uuid] ?: return true
+        return entry.name.isBlank()
+    }
+
+    private fun teleportToward(target: Entity) {
+        val now = System.currentTimeMillis()
+        if (now - lastTpAt < tpCooldownMs) return
+        lastTpAt = now
+
+        val localPlayer = session.localPlayer
+        val dx = target.posX - localPlayer.posX
+        val dz = target.posZ - localPlayer.posZ
+        val len = sqrt(dx * dx + dz * dz)
+        if (len < 0.01f) return
+        val nx = dx / len
+        val nz = dz / len
+
+        session.clientBound(MovePlayerPacket().apply {
+            runtimeEntityId = localPlayer.runtimeEntityId
+            position = Vector3f.from(
+                target.posX - nx * tpKeepDistance,
+                localPlayer.posY,
+                target.posZ - nz * tpKeepDistance
+            )
+            rotation = Vector3f.from(localPlayer.rotationPitch, localPlayer.rotationYaw, localPlayer.rotationYawHead)
+            mode = MovePlayerPacket.Mode.NORMAL
+            isOnGround = false
+            ridingRuntimeEntityId = 0
+            tick = localPlayer.tickExists
+        })
     }
 
     private fun mobEquipment(slot: Int) = MobEquipmentPacket().apply {

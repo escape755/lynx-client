@@ -8,6 +8,7 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventoryTra
 import org.cloudburstmc.protocol.bedrock.packet.InventoryTransactionPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerHotbarPacket
 import kotlin.math.floor
+import kotlin.math.sqrt
 
 /**
  * Mecánica compartida por Anchor Aura, Anchor Helper y Bed Aura: buscar un
@@ -17,6 +18,14 @@ import kotlin.math.floor
  * NO es un Module - lo instancia cada módulo (mismo patrón que
  * PredictiveRotator para las 3 Aura), cada uno con su propio identifier,
  * settings y lista de objetivos/gating.
+ *
+ * v2: se le agregaron dos ideas de BedAuraModule (MuCuteClient) que no
+ * dependen de su tracking de bloques (eso se dejo fuera, ver analisis):
+ * - chequeo de daño antes de colocar (misma formula real de explosion que
+ *   ya usaba CrystalAuraModule, sin reduccion por armadura por la misma
+ *   razon ya explicada ahi).
+ * - volver al item que tenias antes, despues de activar (antes te dejaba
+ *   con el ancla/cama en la mano).
  *
  * LIMITACIÓN CONOCIDA (ver análisis): Level no trackea el estado de los
  * bloques del mundo. blockPosition se asume (el bloque bajo los pies de
@@ -35,8 +44,14 @@ class ExplosiveBlockPlacer(
     // esta en curso; entradas resueltas (o abandonadas) se limpian solas.
     private val placedAt = HashMap<Long, Long>()
 
+    // placementKey -> slot que tenias seleccionado ANTES de que esta clase
+    // cambiara al ancla/cama, solo cuando el cambio lo hizo ella (Aura, no
+    // Helper). Se usa para volver a ese slot despues de activar.
+    private val slotBeforeSwitch = HashMap<Long, Int>()
+
     fun reset() {
         placedAt.clear()
+        slotBeforeSwitch.clear()
     }
 
     /**
@@ -47,6 +62,9 @@ class ExplosiveBlockPlacer(
      *        seleccionado a mano (Anchor Helper); si es false, cambia de slot el solo (Aura)
      * @param placementKey clave estable para esta secuencia colocar->activar
      *        (p.ej. runtimeEntityId del objetivo, o una constante fija para Surround)
+     * @param selfDamageCap si el daño calculado a UNO MISMO en la posicion de colocacion
+     *        supera esto, no se coloca nada. null desactiva el chequeo (p.ej. Surround,
+     *        que no explota nada).
      * @return true si mando algun paquete este tick
      */
     fun tryPlaceAndTrigger(
@@ -56,12 +74,14 @@ class ExplosiveBlockPlacer(
         currentTick: Long,
         triggerAfterTicks: Long,
         requireManualHold: Boolean,
-        placementKey: Long
+        placementKey: Long,
+        selfDamageCap: Float? = null
     ): Boolean {
         val inv = session.localPlayer.inventory
 
         val slot = inv.searchForItemInHotbar { isTargetItem(it) } ?: run {
             placedAt.remove(placementKey)
+            slotBeforeSwitch.remove(placementKey)
             return false
         }
 
@@ -69,12 +89,30 @@ class ExplosiveBlockPlacer(
         if (phase != null) {
             if (currentTick - phase < triggerAfterTicks) return false
             placedAt.remove(placementKey)
-            return sendUse(slot, inv.content[slot], refX, refY, refZ, atGroundLevel = false)
+            val sent = sendUse(slot, inv.content[slot], refX, refY, refZ, atGroundLevel = false)
+            if (sent) {
+                slotBeforeSwitch.remove(placementKey)?.let { original ->
+                    if (original != slot) {
+                        session.serverBound(PlayerHotbarPacket().apply {
+                            selectedHotbarSlot = original
+                            containerId = 0
+                            selectHotbarSlot = true
+                        })
+                    }
+                }
+            }
+            return sent
         }
 
         if (requireManualHold && inv.heldItemSlot != slot) return false
 
+        if (selfDamageCap != null) {
+            val selfDamage = explosionDamage(refX, refY, refZ, session.localPlayer.posX, session.localPlayer.posY, session.localPlayer.posZ)
+            if (selfDamage > selfDamageCap) return false
+        }
+
         if (!requireManualHold && inv.heldItemSlot != slot) {
+            slotBeforeSwitch[placementKey] = inv.heldItemSlot
             session.serverBound(PlayerHotbarPacket().apply {
                 selectedHotbarSlot = slot
                 containerId = 0
@@ -97,20 +135,14 @@ class ExplosiveBlockPlacer(
     ): Boolean {
         if (item == ItemData.AIR) return false
 
-        // atGroundLevel=true (colocar): referencia el bloque bajo los pies -
-        // se asume solido, el nuevo bloque aparece justo en la posicion del
-        // objetivo (cara UP de ese bloque).
-        // atGroundLevel=false (activar): referencia el bloque que se acaba
-        // de colocar (ya esta en la posicion del objetivo), para hacer clic
-        // sobre el y detonarlo.
         val baseY = if (atGroundLevel) floor(refY).toInt() - 1 else floor(refY).toInt()
         val blockPosition = Vector3i.from(floor(refX).toInt(), baseY, floor(refZ).toInt())
 
         val packet = InventoryTransactionPacket().apply {
             transactionType = InventoryTransactionType.ITEM_USE
-            actionType = 0 // click-block (colocar/usar contra un bloque existente)
+            actionType = 0
             this.blockPosition = blockPosition
-            blockFace = 1 // UP - ver Direction estandar de Bedrock (0=Down,1=Up,2=N,3=S,4=W,5=E)
+            blockFace = 1
             hotbarSlot = slot
             itemInHand = item
             playerPosition = session.localPlayer.vec3Position
@@ -119,5 +151,17 @@ class ExplosiveBlockPlacer(
 
         session.serverBound(packet)
         return true
+    }
+
+    /** Misma formula real de explosion de Minecraft que CrystalAuraModule (radio 12, sin armadura). */
+    private fun explosionDamage(cx: Float, cy: Float, cz: Float, tx: Float, ty: Float, tz: Float): Float {
+        val explosionSize = 12f
+        val dx = cx - tx
+        val dy = cy - ty
+        val dz = cz - tz
+        val dist = sqrt(dx * dx + dy * dy + dz * dz) / explosionSize
+        if (dist > 1f) return 0f
+        val impact = 1f - dist
+        return (((impact * impact + impact) / 2f) * 8f * explosionSize + 1f).coerceAtLeast(0f)
     }
 }

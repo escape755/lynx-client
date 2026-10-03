@@ -16,6 +16,7 @@ class BedAuraModule : Module("Bed Aura", ModuleCategory.Combat) {
     private var range by floatValue("Range", 5f, 2f..8f)
     private var interval by intValue("Interval", 1, 1..20)
     private var triggerDelayTicks by intValue("Trigger Delay", 1, 1..10)
+    private var selfDamageCap by floatValue("Self Damage Cap", 18f, 2f..36f)
 
     private val placer by lazy {
         ExplosiveBlockPlacer(session) { it.definition?.identifier?.endsWith("_bed") == true }
@@ -37,7 +38,8 @@ class BedAuraModule : Module("Bed Aura", ModuleCategory.Combat) {
             target.posX, target.posY, target.posZ,
             packet.tick, triggerDelayTicks.toLong(),
             requireManualHold = false,
-            placementKey = target.runtimeEntityId
+            placementKey = target.runtimeEntityId,
+            selfDamageCap = selfDamageCap
         )
     }
 
