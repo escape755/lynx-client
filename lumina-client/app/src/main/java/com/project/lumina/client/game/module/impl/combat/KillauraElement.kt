@@ -1,168 +1,162 @@
+/*
+ * © Project Lumina 2026 — GPLv3 Licensed
+ * You may use, modify, and share this code under the GPL.
+ *
+ * Just know: changing names and colors doesn't make you a developer.
+ * Think before you fork. Build something real — or don't bother.
+ */
+
 package com.project.lumina.client.game.module.impl.combat
 
 import com.project.lumina.client.constructors.Element
 import com.project.lumina.client.constructors.CheatCategory
+import com.project.lumina.client.constructors.ListItem
 import com.project.lumina.client.game.InterceptablePacket
-import com.project.lumina.client.game.entity.*
-import com.project.lumina.client.util.AssetManager
-import org.cloudburstmc.math.vector.Vector3f
-import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
+import com.project.lumina.client.game.entity.Entity
+import com.project.lumina.client.game.entity.Player
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket
-import kotlin.math.*
 
-class KillauraElement(iconResId: Int = AssetManager.getAsset("ic_sword_cross_black_24dp")) : Element(
-    name = "KillAura",
-    category = CheatCategory.Combat,
-    iconResId,
-    displayNameResId = AssetManager.getString("module_killaura_display_name")
+/**
+ * Killaura de Lumina. Idea de targeting tomada de KillauraModule.java
+ * (LeHu/KiwiMods, fuente decompilada) - busqueda por rango, CPS, isBot -
+ * pero NO sus 12 modos de rotacion (SNAP/SMOOTH/LEGIT/JITTER/STRAFE/etc):
+ * por instruccion explicita, las unicas dos rotaciones de este proyecto son
+ * Unified (UnifiedRotation.kt) y Predictive (PredictiveAim/PredictiveRotator),
+ * ambas ya construidas y afinadas para LynxClient, portadas aqui.
+ *
+ * Mejora tomada de LeHu: isBot() revisa tambien xuid vacio/"0", no solo
+ * nombre en blanco - mas fiable que la version anterior (solo nombre) que
+ * se uso en LynxAuraModule/CrystalAuraElement.
+ *
+ * No se porto el chequeo de FriendManager de LeHu: Lumina no tiene sistema
+ * de amigos (mismo motivo por el que PopCounterElement tampoco lo tiene).
+ */
+class KillauraElement : Element(
+    name = "Killaura",
+    category = CheatCategory.Combat
 ) {
-    private val playerOnly by boolValue("Players", false)
-    private val mobsOnly by boolValue("Mobs", true)
-    private val range by floatValue("Range", 3.7f, 2f..7f)
-    private val delay by intValue("Delay", 5, 1..20)
-    private val cps by intValue("CPS", 5, 1..20)
-    private val packets by intValue("Packets", 1, 1..10)
-    private val tpAura by boolValue("TP Aura", false)
-    private val strafe by boolValue("Strafe", false)
-    private val tpBehind by boolValue("Teleport Behind", false)
-    private val keepDist by floatValue("Keep Distance", 2.0f, 1f..5f)
-    private val tpSpeed by intValue("TP Speed", 500, 100..2000)
-    private val strafeSpeed by floatValue("Strafe Speed", 1.0f, 0.1f..2.0f)
-    private val strafeRadius by floatValue("Strafe Radius", 1.0f, 0.1f..5.0f)
 
-    private val notification by boolValue("Notification", true)
-    private val multiTarget by boolValue("Multi Target", false)
-    private val notificationInterval = 1000L
+    private enum class RotMode(override val name: String) : ListItem {
+        Unified("Unified"),
+        Predictive("Predictive")
+    }
 
-    private var strafeAngle = 0f
-    private var lastAttack = 0L
-    private var tpCooldown = 0L
-    private var lastNotificationTime = 0L
+    private var range by floatValue("Range", 4.2f, 2f..7f)
+    private var cpsValue by intValue("CPS", 10, 1..20)
+    private var packets by intValue("Packets", 1, 1..10)
+    private var playersOnly by boolValue("Players Only", true)
+    private var antiBot by boolValue("Anti Bot", true)
+    private var rotModeItem by listValue("Rotation", RotMode.Unified, setOf(RotMode.Unified, RotMode.Predictive))
+
+    // Unified
+    private var predTime by floatValue("Pred Time", 2.0f, 0.5f..4f)
+    private var predStrength by floatValue("Pred Strength", 1.0f, 0f..2f)
+    private var rotSmoothing by floatValue("Rot Smoothing", 0.35f, 0.05f..1f)
+    private var rotMaxSpeed by floatValue("Rot Max Speed", 30f, 5f..60f)
+    private var rotAccel by floatValue("Rot Accel", 12f, 1f..30f)
+    private var cameraSync by boolValue("Camera Sync", true)
+
+    private var lastAttackTime = 0L
+    private val unifiedCtx = UnifiedRotation.Ctx()
+    private val predictive = PredictiveRotator()
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
-        if (!isEnabled || interceptablePacket.packet !is PlayerAuthInputPacket) return
+        if (!isEnabled) return
 
-        val packet = interceptablePacket.packet as PlayerAuthInputPacket
+        val packet = interceptablePacket.packet
+        if (packet !is PlayerAuthInputPacket) return
+
+        val targets = findTargets()
+        if (targets.isEmpty()) {
+            if (predictive.isOverriding) {
+                predictive.update(session, packet, mutableListOf(), predictiveSettings())
+            }
+            return
+        }
+
+        when (rotModeItem) {
+            RotMode.Unified -> applyUnified(packet, targets[0])
+            RotMode.Predictive -> {
+                val mutable = targets.toMutableList()
+                if (predictive.update(session, packet, mutable, predictiveSettings())) {
+                    packet.rotation = org.cloudburstmc.math.vector.Vector3f.from(
+                        predictive.pitch, predictive.yaw, predictive.yaw
+                    )
+                }
+            }
+        }
+
         val now = System.currentTimeMillis()
-        val minDelay = 1000L / cps
+        val minDelay = 1000L / cpsValue
+        if (now - lastAttackTime < minDelay) return
 
-        if (packet.tick % delay != 0L || (now - lastAttack) < minDelay) return
-
-        val targets = getTargets()
-        if (targets.isEmpty()) return
-
-        if (notification && targets.isNotEmpty() && now - lastNotificationTime >= notificationInterval) {
-            showNotification(targets, now)
+        targets.forEach { target ->
+            repeat(packets) { session.localPlayer.attack(target) }
         }
-
-        targets.forEach { target -> attack(target, now) }
+        lastAttackTime = now
     }
 
-    private fun attack(target: Entity, now: Long) {
-        if (tpAura && (now - tpCooldown) >= tpSpeed) {
-            tp(target)
-            tpCooldown = now
-        }
-
-        repeat(packets) { session.localPlayer.attack(target) }
-        if (strafe) doStrafe(target)
-        lastAttack = now
-    }
-
-    private fun doStrafe(target: Entity) {
-        strafeAngle = (strafeAngle + strafeSpeed) % 360f
-        val rad = Math.toRadians(strafeAngle.toDouble())
-        val pos = target.vec3Position.add(
-            (strafeRadius * cos(rad)).toFloat(),
-            0f,
-            (strafeRadius * sin(rad)).toFloat()
+    private fun applyUnified(packet: PlayerAuthInputPacket, target: Entity) {
+        val localPlayer = session.localPlayer
+        val eyeY = localPlayer.posY
+        UnifiedRotation.unified(
+            unifiedCtx,
+            UnifiedRotation.Target(
+                target.posX, feetYOf(target), target.posZ,
+                target.motionX, target.motionY, target.motionZ,
+                1.8f
+            ),
+            UnifiedRotation.Env(
+                localPlayer.posX, eyeY, localPlayer.posZ,
+                localPlayer.motionX, localPlayer.motionY, localPlayer.motionZ
+            )
         )
-        move(pos, Vector3f.ZERO)
-    }
-
-    private fun tp(target: Entity) {
-        val dir = if (tpBehind) getBehindDir(target) else getOptimalDir(target)
-        val pos = target.vec3Position.add(
-            dir.x * keepDist,
-            0f,
-            dir.z * keepDist
+        packet.rotation = org.cloudburstmc.math.vector.Vector3f.from(
+            unifiedCtx.rotPitch, unifiedCtx.rotYaw, unifiedCtx.headYaw
         )
-        move(pos, target.vec3Rotation, false)
     }
 
-    private fun getBehindDir(target: Entity): Vector3f {
-        val yaw = Math.toRadians(target.vec3Rotation.y.toDouble())
-        return Vector3f.from(sin(yaw).toFloat(), 0f, -cos(yaw).toFloat()).norm()
+    private fun predictiveSettings() = PredictiveRotator.Settings(
+        predTime = predTime,
+        predStrength = predStrength,
+        smoothing = rotSmoothing,
+        maxSpeed = rotMaxSpeed,
+        accel = rotAccel,
+        cameraSync = cameraSync,
+        playerYOffset = 1.62f,
+        vertOffset = 0.3f
+    )
+
+    private fun feetYOf(e: Entity): Float = if (e is Player) e.posY - 1.62f else e.posY
+
+    private fun findTargets(): List<Entity> {
+        val localPlayer = session.localPlayer
+        return session.level.entityMap.values
+            .filter { entity ->
+                entity.distance(localPlayer) <= range &&
+                        isTarget(entity)
+            }
+            .sortedBy { it.distance(localPlayer) }
     }
 
-    private fun getOptimalDir(target: Entity): Vector3f {
-        val playerPos = session.localPlayer.vec3Position
-        val targetPos = target.vec3Position
-        return Vector3f.from(
-            playerPos.x - targetPos.x,
-            0f,
-            playerPos.z - targetPos.z
-        ).norm()
+    private fun isTarget(entity: Entity): Boolean {
+        if (entity.runtimeEntityId == session.localPlayer.runtimeEntityId) return false
+        val isPlayer = entity is Player
+        if (playersOnly && !isPlayer) return false
+        if (isPlayer && antiBot && isBot(entity as Player)) return false
+        return true
     }
 
-    private fun move(pos: Vector3f, rot: Vector3f, onGround: Boolean = true) {
-        session.clientBound(MovePlayerPacket().apply {
-            runtimeEntityId = session.localPlayer.runtimeEntityId
-            position = pos
-            rotation = rot
-            mode = MovePlayerPacket.Mode.NORMAL
-            isOnGround = onGround
-            ridingRuntimeEntityId = 0
-            tick = session.localPlayer.tickExists
-        })
+    /** isBot: revisa tanto el nombre como el xuid en playerMap - idea de LeHu. */
+    private fun isBot(player: Player): Boolean {
+        val entry = session.level.playerMap[player.uuid] ?: return true
+        if (entry.name.isBlank()) return true
+        val xuid = entry.xuid
+        return xuid.isNullOrBlank() || xuid == "0"
     }
 
-    private fun showNotification(targets: List<Entity>, now: Long) {
-        val target = targets.first()
-        val coords = "(${target.vec3Position.x.toInt()}, ${target.vec3Position.y.toInt()}, ${target.vec3Position.z.toInt()})"
-        val distance = String.format("%.1f", target.distance(session.localPlayer))
-        val entityName = getEntityName(target)
-        val targetCount = if (multiTarget) " (${targets.size} targets)" else ""
-
-        session.showNotification(
-            "Attacking $entityName$targetCount",
-            "$coords | Dist: ${distance}b | CPS: $cps",
-            com.project.lumina.client.R.drawable.swords_24px
-        )
-        lastNotificationTime = now
+    override fun onDisabled() {
+        super.onDisabled()
+        if (isSessionCreated) predictive.reset()
     }
-
-    private fun getEntityName(entity: Entity): String = when (entity) {
-        is Player -> entity.username
-        is EntityUnknown -> entity.identifier.substringAfter(':').replaceFirstChar { it.uppercase() }
-        else -> "Unknown"
-    }
-
-    private fun getTargets(): List<Entity> = session.level.entityMap.values.filter {
-        it.distance(session.localPlayer) <= range && it.isValid()
-    }
-
-    private fun Entity.isValid(): Boolean = when (this) {
-        is LocalPlayer -> false
-        is Player -> (playerOnly || (playerOnly && mobsOnly)) && !isBot()
-        is EntityUnknown -> (mobsOnly || (playerOnly && mobsOnly)) && isMob() && !isShadow()
-        else -> false
-    }
-
-    private fun EntityUnknown.isMob(): Boolean = identifier in MobList.mobTypes
-
-    private fun EntityUnknown.isShadow(): Boolean = identifier == "hivecommon:shadow"
-
-    private fun Player.isBot(): Boolean {
-        if (this is LocalPlayer) return false
-        val name = session.level.playerMap[uuid]?.name
-        return if (name != null) name.toString().isBlank() else true
-    }
-
-    private fun Vector3f.norm(): Vector3f {
-        val len = length()
-        return if (len != 0f) Vector3f.from(x / len, y / len, z / len) else this
-    }
-
-    private val now get() = System.currentTimeMillis()
 }

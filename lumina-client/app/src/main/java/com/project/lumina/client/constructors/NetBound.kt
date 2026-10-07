@@ -295,7 +295,11 @@ class NetBound(val luminaRelaySession: LuminaRelaySession) : ComposedPacketHandl
 
         val interceptablePacket = InterceptablePacket(packet)
         for (module in GameManager.elements) {
-            module.beforePacketBound(interceptablePacket)
+            try {
+                module.beforePacketBound(interceptablePacket)
+            } catch (e: Exception) {
+                reportModuleFailure(module.name, packet, e)
+            }
             if (interceptablePacket.isIntercepted) return true
         }
 
@@ -305,8 +309,39 @@ class NetBound(val luminaRelaySession: LuminaRelaySession) : ComposedPacketHandl
 
     override fun afterPacketBound(packet: BedrockPacket) {
         for (module in GameManager.elements) {
-            module.afterPacketBound(packet)
+            try {
+                module.afterPacketBound(packet)
+            } catch (e: Exception) {
+                reportModuleFailure("${module.name} (afterPacketBound)", packet, e)
+            }
         }
+    }
+
+    // CAUSA (ver auditoria): antes, una excepcion de CUALQUIER modulo dentro
+    // del for de arriba se propagaba sin capturar fuera de beforePacketBound,
+    // es decir fuera del handler de paquetes de NetBound en si - con mas
+    // jugadores hay mas paquetes y mas superficie para que algun modulo
+    // falle en un caso limite (entidad a medio despawnear, metadata
+    // incompleta, etc.), y esa unica falla podia tumbar el procesamiento de
+    // ESE paquete para TODOS los modulos restantes, y de ahi hacia arriba
+    // hasta el propio pipeline del relay. Aislar por modulo evita que un
+    // fallo en uno tumbe a los demas ni al relay.
+    //
+    // No se traga el error en silencio: se loguea completo (con stack
+    // trace) siempre, y se avisa en el chat del juego - limitado a 1 aviso
+    // cada 10s por modulo para no inundar el chat si el mismo modulo falla
+    // en paquetes de alta frecuencia (PlayerAuthInputPacket llega ~20/s).
+    private val lastFailureReportNs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun reportModuleFailure(moduleName: String, packet: BedrockPacket, e: Exception) {
+        Log.e("NetBound", "$moduleName failed to handle ${packet::class.simpleName}", e)
+
+        val now = System.nanoTime()
+        val last = lastFailureReportNs[moduleName]
+        if (last != null && now - last < 10_000_000_000L) return
+        lastFailureReportNs[moduleName] = now
+
+        displayClientMessage("§c[Lumina] $moduleName crashed on ${packet::class.simpleName}: ${e.message}")
     }
 
     override fun onDisconnect(reason: String) {

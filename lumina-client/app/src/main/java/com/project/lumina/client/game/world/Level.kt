@@ -16,10 +16,16 @@ import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket
 import org.cloudburstmc.protocol.bedrock.packet.AddItemEntityPacket
 import org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket
+import org.cloudburstmc.protocol.bedrock.packet.MobEffectPacket
+import org.cloudburstmc.protocol.bedrock.packet.MoveEntityAbsolutePacket
+import org.cloudburstmc.protocol.bedrock.packet.MoveEntityDeltaPacket
+import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket
 import org.cloudburstmc.protocol.bedrock.packet.PlayerListPacket
 import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket
+import org.cloudburstmc.protocol.bedrock.packet.SetEntityDataPacket
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket
 import org.cloudburstmc.protocol.bedrock.packet.TakeItemEntityPacket
+import org.cloudburstmc.protocol.bedrock.packet.UpdateAttributesPacket
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -130,11 +136,42 @@ class Level(val session: NetBound) : Listenable {
                 playerMap.clear()
             }
 
+            // CAUSA (ver auditoria): estos paquetes llevan el runtimeEntityId
+            // de UNA sola entidad, y Entity/Player/etc. ya descartan
+            // internamente cualquier paquete que no sea el suyo (comparan
+            // packet.runtimeEntityId == runtimeEntityId). Antes esto caia en
+            // el "else" de abajo y recorria TODAS las entidades por cada uno
+            // de estos paquetes para que cada una se auto-descartara: con N
+            // entidades cercanas, cada una mandando ~20 paquetes/s, el coste
+            // crece como N² en vez de N. Un lookup directo por id es O(1).
+            is MoveEntityAbsolutePacket -> entityMap[packet.runtimeEntityId]?.let { dispatchTo(it, packet) }
+            is MoveEntityDeltaPacket -> entityMap[packet.runtimeEntityId]?.let { dispatchTo(it, packet) }
+            is MovePlayerPacket -> entityMap[packet.runtimeEntityId]?.let { dispatchTo(it, packet) }
+            is SetEntityDataPacket -> entityMap[packet.runtimeEntityId]?.let { dispatchTo(it, packet) }
+            is UpdateAttributesPacket -> entityMap[packet.runtimeEntityId]?.let { dispatchTo(it, packet) }
+            is MobEffectPacket -> entityMap[packet.runtimeEntityId]?.let { dispatchTo(it, packet) }
+
             else -> {
+                // Resto de paquetes (p.ej. SetEntityLinkPacket, que referencia
+                // DOS entidades por uniqueEntityId, jinete/montura - ahi si
+                // hace falta recorrer todo porque no hay un id unico al que
+                // indexar).
                 entityMap.values.forEach { entity ->
-                    entity.onPacketBound(packet)
+                    dispatchTo(entity, packet)
                 }
             }
+        }
+    }
+
+    private fun dispatchTo(entity: Entity, packet: BedrockPacket) {
+        try {
+            entity.onPacketBound(packet)
+        } catch (e: Exception) {
+            Log.e(
+                "Level",
+                "Entity ${entity.runtimeEntityId} (${entity::class.simpleName}) failed to handle ${packet::class.simpleName}",
+                e
+            )
         }
     }
 
